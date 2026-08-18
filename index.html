@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zombie Tower Defense</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <div id="labels"></div>
+
+  <!-- Top HUD bar -->
+  <header id="hud" class="hidden">
+    <div class="hud-group" title="Money">
+      <span class="hud-coin"></span>
+      <span id="hud-money">0</span>
+    </div>
+    <div class="hud-group">
+      <span class="hud-label">WAVE</span>
+      <span id="hud-wave">– / 100</span>
+    </div>
+    <div class="hud-group">
+      <span class="hud-label">ZOMBIES</span>
+      <span id="hud-zombies">0</span>
+    </div>
+    <div class="hud-group hp">
+      <span class="hud-label">BASE</span>
+      <div id="hud-basebar"><div id="hud-basefill"></div></div>
+    </div>
+    <div class="hud-right">
+      <button id="btn-speed" class="hud-btn">1x</button>
+      <button id="btn-autowave" class="hud-btn" title="Lance la vague suivante immédiatement dès qu'une vague est finie (pas de délai de 5s) — et rapporte le bonus d'avance maximal">⚡ Auto</button>
+      <button id="btn-pause" class="hud-btn">Pause</button>
+    </div>
+  </header>
+
+  <!-- Bottom build panel (tower cards injected by ui.js) -->
+  <div id="buildpanel" class="hidden"></div>
+
+  <!-- Selected tower panel (right) -->
+  <aside id="towerpanel" class="hidden">
+    <h3 id="tp-name">Tower</h3>
+    <div id="tp-stats"></div>
+    <div id="tp-targeting" class="hidden"></div>
+    <div class="tp-actions">
+      <button id="tp-upgrade">Upgrade</button>
+      <button id="tp-sell">Sell</button>
+    </div>
+  </aside>
+
+  <!-- Full-screen overlay (start / pause / lose / win) -->
+  <div id="screen" class="hidden">
+    <div class="screen-card">
+      <h1 id="screen-title">Zombie Tower Defense</h1>
+      <p id="screen-sub">Defend the base from 15 escalating waves of the undead.</p>
+      <div id="screen-body"></div>
+      <button id="screen-btn">Play</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

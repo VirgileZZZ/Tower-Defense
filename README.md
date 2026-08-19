@@ -1,6 +1,6 @@
 # 🧟 Zombie Tower Defense 3D
 
-Jeu de tour défense (tower defense) **entièrement en 3D** avec **Three.js**, tourné sous un serveur **Vite**. Aucune ressource externe : tous les modèles 3D (tours, zombies, boss, maison, décorations de skins) sont générés à partir de primitives Three.js.
+Tower defense **entièrement en 3D** avec Three.js + Vite. Zéro ressource externe : tous les modèles 3D (9 tours, 3 types de zombies, 10 boss, maison, ~30 décors, structures de skins) sont générés à partir de primitives Three.js, et tous les sons sont synthétisés en WebAudio.
 
 ---
 
@@ -8,264 +8,228 @@ Jeu de tour défense (tower defense) **entièrement en 3D** avec **Three.js**, t
 
 ```bash
 npm install          # installe Vite + three
-npm run dev          # serveur de dev — ouvre l'URL affichée (ex. http://localhost:5201/)
+npm run dev          # serveur de dev (ex. http://localhost:5201/)
 npm run build        # bundle de production dans dist/
 npm run preview      # sert le build de production
 ```
 
-`package.json` est en **ESM** (`"type": "module"`). Le projet utilise Vite 8.x (base rolldown) et Three.js récente.
+`package.json` est en **ESM** (`"type": "module"`), Vite 8.x (base rolldown), Three.js récente.
 
 ---
 
 ## 🎮 Comment jouer
 
-- Placez des tours sur les emplacements verts autour du chemin ; cliquez sur une tour pour l'inspecter, **upgrader** ou la revendre (refund 70 %).
-- Les zombies suivent un **chemin sinueux unique** de `src/path.js` jusqu'à votre maison. Chaque fuite lui coûte **10 PV** ; la maison en a 25. À zéro : Game Over (les PV se restaurent à chaque menu, les pièces non).
-- Il y a **100 vagues**, avec un **boss tous les 10 vagues**. Les thèmes de carte changent automatiquement toutes les ~5 vagues et tournent en boucle (voir « Thèmes »).
-- Vitesse du jeu : le bouton `Speed` de l'HUD alterne entre les vitesses débloquées (**×1, ×2 par défaut** ; **×4 = 5 000 🪙**, **×6 = 20 000 🪙** en Boutique).
-- ⚡ Le bouton **Auto** (à côté de Speed) supprime le délai de 5 s entre les vagues. Il n'apparaît dans l'HUD qu'**après son achat en Boutique (10 000 🪙)**. La vague suivante démarre alors immédiatement à la fin de la précédente.
-- Les pièces, tours achetées, skins et plafonds de niveaux sont **sauvegardés automatiquement** dans `localStorage` (clé `ztd_save_v1`) d'une session à l'autre.
+1. Choisissez une **difficulté** (écran « Jouer ») : 4 campagnes à durée finie + le mode **Infini**.
+2. Placez des tours sur les emplacements valides autour du chemin. Les zombies suivent un **chemin en S** (12 points d'inflexion) jusqu'à votre maison.
+3. Chaque fuitant blesse la base ; un **boss qui atteint la base = défaite immédiate** (voir « Fuites & boss »).
+4. Les vagues se lancent toutes les **5 s** (bouton/`Espace` pour avancer, avec **bonus de 2 🪙/s restant**) — ou **immédiatement** après avoir acheté le ⚡ Mode Auto-Wave (10 000 🪙).
+5. Vitesse du jeu : le bouton `Speed` du HUD cycle parmi les vitesses débloquées (**×1, ×2** par défaut ; **×4 = 5 000 🪙**, **×6 = 20 000 🪙** en Boutique).
 
-### Contrôles clavier
-| Touche | Action |
+**Économie entre les parties :** les pièces *gagnées pendant la partie* (kills, bonus) sont **mises de côté à la fin** (victoire **ou** défaite) et ajoutées à votre **cagnotte permanente**, qui s'utilise dans la Boutique. La cagnotte, les tours/skins/levels/vitesses achetés et les modes gagnés persistent entre les sessions (`localStorage`, clé `ztd_save_v1`).
+
+### Contrôles
+| Entrée | Action |
 |---|---|
-| `B 1…6` | choisir le type de tour à construire (selon les tours débloquées) |
-| `X` | supprimer / annuler la sélection en cours |
-| `P` ou `Échap` | pause / reprise |
-| Clic gauche | placer une tour · sélectionner un bouton/UI · désélectionner sur vide |
-| Clic droit | fermer le panneau de tour (ou annuler) |
+| `1` – `6` | choisir la tour (1 Gunner · 2 Frost · 3 Flame · 4 Sniper · 5 Mortar · 6 Mine ; les 3 autres se cliquent dans le panneau) |
+| Clic gauche | placer la tour choisie · inspecter une tour · fermer le panneau en cliquant sur le vide |
+| `U` / clic « Upgrader » | améliorer la tour sélectionnée (selon son plafond de niveau) |
+| `S` / clic « Sell » | revendre la tour sélectionnée (**remboursement = 50 %** de l'investissement) |
+| `Espace` | lancer la vague suivante en avance (+bonus) |
+| `P` | pause / reprendre |
+| `Échap` / clic droit | annuler le placement / fermer le panneau |
 
-Le **placement fantôme** suit la souris, passe au-dessus du terrain 3D et se fige près du chemin ou des tours ; vert = place valide, rouge = invalide.
-
----
-
-## 🗼 Les six tours
-
-| Tour | Prix | Style |
-|---|---|---|
-| **Gunner** (débloqué) | 50g | Tirs simples rapides, le couteau suisse |
-| **Sniper** (débloqué) | 120g | Longue portée, gros dégâts, cadence lente |
-| **Mine** (débloquée) | 30g | Damier auto : déplace un zombie + dégâts de zone à son passage |
-| **Frost** — achetable en Boutique (5 000 🪙) | — | Ralentit les zombies (~40 → 68 % max), petit dégât |
-| **Flame** — achetable en Boutique (5 000 🪙) | — | Dégâts continus (beam de feu) en zone courte |
-| **Mortar** — achetable en Boutique (3 000 🪙) | — | Salves en arc, gros dégâts d'éclat |
-
-**Niveaux :** chaque tour monte de **Lv1 → Lv5**. Au départ le plafond est **Lv2** ; les paliers 3/4/5 s'achètent dans la section « Niveaux avancés » de la Boutique (1 case par niveau, remplissage or quand possédé). Courbe de dégâts douce : **×1,32 par niveau** (ex. Gunner : 10 → 13 → 17 → 23 → 30), petits bonus linéaires sur portée/éclat/cadence, ralentissement plafonné à 68 %.
+Le **fantôme de placement** suit la souris au-dessus du terrain : vert = place valide, rouge = invalide (trop près du chemin pour une tour normale — **les Mines doivent être proches du chemin**).
 
 ---
 
-## 🧟 Vagues, zombies & boss
+## 🕹️ Modes de difficulté (style TDS)
 
-- `CONFIG.buildWaves()` génère les **100 vagues** au démarrage (aucune table statique) : composition croissante + scaling des PV en **linéaire × quadratique** (`1 + 0,13·(w−1) + 0,0035·(w−1)²`), pour que les vagues tardives pèsent vraiment.
-- Types de zombies (skins par thème : classique / `snowy` / `magma` / `ashen` / `phantom`) : **walker** (base), **fast** (rapide, fragile), **tank** (lent, solide), **wraith** (semi-transparent).
-- **10 boss uniques**, chacun avec son modèle 3D et sa capacité : Goliath (*Petrify*), Sprinter Royal, Matron Mireille (*Cercle de Vie*), Colossus Ashen (*Onde de choc* → ralentit vos tours), Phantasm Warden (*Phasing*), Frost Empress (*Aura gelée* → fige une tour + givre sur les zombies), Pyroclast Titan (*Fireball*), Hive Tyrant (ravitaille les zombie morts-vivants + invoque un minion), Void Reaver (*Stun*), Gravemother.
-- **Boss every 10 waves** : le boss apparaît en dernier de la vague et ouvre son « ability window » ~2 s plus tard ; il peut invoquer des minions, lancer des fireballs vers votre base ou vous, etc.
+| Mode | Vagues | Carte | PV base | Pièces départ | Boss final | Bonus de victoire | Débloqué si… |
+|---|---|---|---|---|---|---|---|
+| **Débutant** | 25 | Cendres 🪨 (ashlands) | 40 | 350 | The Brute | +500 🪙 | par défaut |
+| **Moyen** | 30 | Neige ❄️ (winter) | 40 | 280 | The Abomination | +1 000 🪙 | Débutant gagné |
+| **Avancé** | 35 | Volcan 🌋 (volcanic) | 40 | 220 | The Titan | +2 500 🪙 | Moyen gagné |
+| **Impossible** | 40 | Zone radioactive ☢️ (radio) | 35 | 180 | The Wraith | +5 000 🪙 | Avancé gagné |
+| **∞ Infini** | sans fin | toutes les cartes, rotation toutes les 5 vagues | 40 | 200 | boss complet toutes les 10 vagues (cycle des 10) | — | toujours |
 
----
-
-## 🗺️ Les six thèmes (cycles automatiques)
-
-| Theme | Carte / ambiance |
-|---|---|
-| **suburb** | Route asphaltée, pelouses et maisons de banlieue, ciel clair |
-| **winter** | Sol givré bleu-blanc, neige en permanence, sapins blancs |
-| **volcanic** | Terres brûlées or/rouge, volcan actif avec particules, astrolabe de lumière |
-| **ashlands** | Post-apo : brume grise, herbes mortes rousses, débris et gravats (rochers massifs) |
-| **haunted** | Basse saturation bleue-verte, brume spectrale, champignons bioluminescents + roseaux |
-| **radioactive** | 🆕 Ciel malade vert-noir, dôme de confinement fêlé avec halo pulsant, barils de déchets rayonnants, plots jaune/noir, flore mutante bioluminescente, rochers sombres — zombies verts irisés (« radiant ») +8 % PV, 5 % armure |
-
-La vague 1–5 = suburb, 6–10 = winter… le cycle recommence (modulo sur `(wave−1)/5` avec 6 thèmes), donc les thèmes tournent pendant toute la partie de 100 vagues.
-
-**⚖️ Équilibrage (v2)** : courbe d'PV zombie adoucie (+11 %/vague au lieu de +13 %, terme quadratique ÷2) et croissance des tours relevée à ×1,36/niveau — les tours niveau 5 restent compétitives jusqu'en fin de partie sans être écrasées par les vagues tardives.
-
-**⚙️ Paramètres (menu principal)** : boutons « ⚙ Paramètres » → panneau avec **Particules** (Faible/Moyen/Max — densité des explosions), **Cadavres visibles simultanés** (5/10/20/40/80), **Son on/off**, et le reset de progression. Le gros bouton « Réinitialiser la progression » d'antan a été remplacé par ce panneau.
-
-**🔊 Audio** : tous les sons sont synthétisés en WebAudio (aucun asset) — tirs distincts par tour, impacts, morts, placements, achats, alarme de vague, coup à la base, fanfare de victoire et glissando de défaite. Throttillés pour rester légers.
-
-**📈 Zones enrichies** : de nouveaux props 3D (réacteur, barils radioactifs, marquage jaune/noir, flore mutante, rochers massifs, roseaux) + 6e zone radioactive complète.
+**Règles de vagues (modes finis)**
+- Les vagues sont **générées** (`buildModeWaves` dans `src/config.js`) : composition croissante (walkers dès le départ, fasts dès la vague 3, tanks dès la vague 5) et PV en courbe linéaire + légère courbure quadratique propres à chaque mode.
+- **Mini-boss toutes les 5 vagues** : un modèle de boss classique « réduit », tiré du pool du mode (ex. Moyen : Pyro Lord → Abomination → Stone Golem, en rotation).
+- **Boss final** à la dernière vague — celui du mode (Brute / Abomination / Titan / Wraith).
+- **Déverrouillage progressif** : gagner un mode l'enregistre dans la sauvegarde (`completed`) et débloque le suivant ; les cartes verrouillées sont grisées.
+- **Mode Infini** : vagues générées à la volée, thèmes qui tournent en boucle, boss cycliques — pour se tester sans fin (pas de bonus de victoire, les pièces viennent des kills).
 
 ---
 
-## 💰 Économie & persistance
+## 🗼 Les 9 tours
 
-- **Pièces** : tuée = récompense (le boss rapporte gros), **bonus d'avance** si vous lancez la vague suivante avant la fin des 5 s, **refund à la revente** = 70 % de la valeur courante.
-- **Les pièces persistent entre les sessions** (localStorage `ztd_save_v1`) : tours achetées, niveaux achetés (`towerCaps`), skins achetés/équipés, vitesses débloquées (`unlockedSpeeds`).
-- Menu principal : « Jouer », « Boutique » (avec aperçus 3D en temps réel de chaque tour/skin via un renderer offscreen), « Inventaire » (tours possédées + maison + catalogue des monstres), « Réinitialiser la sauvegarde ».
+| Tour | Coût (en partie) | Disponible | Type | Stats niveau 1 | Rôle |
+|---|---|---|---|---|---|
+| **Gunner** | 50 | dès le départ | tir simple | 10 dég. · 0,5 s · portée 6 | Le couteau suisse du début de partie |
+| **Frost** | 70 | Boutique — 5 000 🪙 | ralentissement | 10 dég. + gel 40 % (3 s) · 2 s · portée 7 | Étend la durée de vie de vos autres tours |
+| **Flame** | 90 | Boutique — 5 000 🪙 | flammes continues | 30 DPS · portée 3,5 | Fond tout ce qui s'approche, en impasse |
+| **Sniper** | 100 | dès le départ | tir lourd longue portée | 55 dég. · 1,8 s · portée 14 | Cueille les tanks et les gros PV |
+| **Mortar** | 80 | Boutique — 3 000 🪙 | tir en cloche (éclat) | 40 dég. + éclat 2,5 · 1,6 s · portée 11 | Les groupes serrés |
+| **Mine** | 30 | dès le départ | mine au sol | 45 dég. · rayon 2,2 | S'active au passage, se déplace après usage |
+| **Électro** | 130 | Boutique — 6 000 🪙 | foudre en chaîne | 42 dég. + saute sur 2 cibles (60 %/35 %) · 1,15 s · portée 6,5 | ≈ 180 % de dégâts sur 3 zombies groupés |
+| **Minigun** | 110 | Boutique — 4 500 🪙 | rafale rapide | 3,2 dég. · 0,085 s (≈ 38 DPS) · portée 7,5 | La reine des hordes |
+| **Ferme** | 120 | Boutique — 7 000 🪙 | économie | +7 🪙 toutes les 6 s | Ne se défend pas — placez-la près de la maison |
 
-### Boutique — ce qui s'y achète
+**Niveaux (Lv1 → Lv5)**
+- Le plafond de départ est **Lv2** pour chaque tour ; les paliers **Lv3 / Lv4 / Lv5** s'achètent dans la Boutique (« Niveaux avancés ») : **1 200 / 3 000 / 7 000 🪙** par tour (une case par niveau, or quand possédé).
+- Chaque niveau multiplie dégâts/DPS par **×1,36** (douce courbe multiplicative), avec de petits bonus linéaires sur portée/cadence/éclat ; la **Ferme** voit son rendement augmenter à chaque niveau (7 → 11 → 14 → 18 → 21 🪙 / cycle).
+- **Revente : 50 %** de l'investissement (coût de la tour + achats de niveaux).
+
+---
+
+## 🧟 Zombies, fuites & boss
+
+### Les 3 types de zombies
+| Type | PV | Vitesse | Récompense | Dégâts de fuite |
+|---|---|---|---|---|
+| **Walker** | 40 | 1,6 | 8 🪙 | 2 |
+| **Fast** | 30 | 2,6 | 10 🪙 | 2 |
+| **Tank** | 120 | 1,0 | 18 🪙 | 5 (armure 15 %) |
+
+Les **skins par thème** modifient les stats de base : `snowy` (+15 % PV, 10 % armure, −10 % vitesse), `lava` (+10 % PV, 5 % armure), `dirty` (−5 % PV, +5 % vitesse), `water` (50 % résistance au ralentissement), `radiant` (+12 % PV, 8 % armure), `default` (neutre). La skin est imposée par le thème de la carte.
+
+### Les 10 boss
+Chaque boss a son **modèle 3D**, sa **PV/compensation** et sa **capacité** :
+
+| Boss | PV | Vitesse | Récompense | Capacité |
+|---|---|---|---|---|
+| The Brute | 1 200 | 0,9 | 120 🪙 | fige les tours proches 3 s |
+| The Stalker | 900 | 2,2 | 100 🪙 | se téléporte en avant + paralyse une tour 2 s |
+| The Frost King | 1 100 | 1,1 | 110 🪙 | aura glaciale : engourdit les tours proches 3 s |
+| The Pyro Lord | 1 300 | 1,0 | 130 🪙 | boules de feu directes vers la base |
+| The Abomination | 2 000 | 0,7 | 200 🪙 | crache un petit zombie à chaque attaque |
+| Stone Golem | 2 600 | 0,6 | 260 🪙 | piétifie les tours sous une coque de pierre (4 s) |
+| The Sprinter | 2 200 | 1,4 | 240 🪙 | rafales de sprint (vitesse ×2) |
+| The Regenerator | 2 400 | 1,0 | 250 🪙 | se régénère de 5 % de ses PV à chaque attaque |
+| The Titan | 3 200 | 0,8 | 320 🪙 | onde de choc + **seconde vie** (revient à 50 %) |
+| The Wraith | 2 800 | 1,2 | 300 🪙 | **phases** : vos projectiles le traversent parfois |
+
+### Fuites & règle d'or
+- Un zombie qui atteint la base retire ses **dégâts de fuite** (2/2/5 ci-dessus ; 8 à 16 pour les boss selon leur taille).
+- 🚨 **Un boss qui atteint la maison = défaite instantanée**, quel que soit le PV restant — les boss (mini-boss compris) enfoncent la structure d'un seul coup.
+
+---
+
+## 🗺️ Cartes & thèmes
+
+**Carte** : terrain 68 × 52 (le décor déborde au-delà de la zone constructible), chemin en S surélevé de 3,0 de large, zone de construction x ∈ [−24, 26], z ∈ [−14, 14]. Relief doux (collines sinusoïdales) aplati autour du chemin.
+
+**Les 6 thèmes** (chaque thème = ciel/brume/sol/chemin + plusieurs dizaines de props 3D + skin de zombies) :
+
+| # | Thème | Ambiance | Skin zombies |
+|---|---|---|---|
+| 0 | **suburb** | Banlieue : maisons, lampadaires, clôtures, puits, haies, fleurs | default |
+| 1 | **winter** | Givré bleu-blanc, neige en permanence, monticules de neige, sapins blancs | snowy |
+| 2 | **volcanic** | Terres brûlées, volcan actif à particules, pics rocheux, laves, cendres | lava |
+| 3 | **ashlands** | Post-apo : brume grise, panneaux cassés, tombes, crânes, arbres morts, barils | dirty |
+| 4 | **haunted** | Spectral bleu-vert : champignons bioluminescents, roseaux, ruines, ossements | water |
+| 5 | **radio** | ☢️ Dôme de confinement fêlé, barils de déchets, marquages jaune/noir, flore mutante | radiant |
+
+En **modes finis**, la partie reste sur SA carte dédiée (Cendres / Neige / Volcan / Radio). En **Infini**, le thème **rotate toutes les 5 vagues** (modulo `(vague−1)/5`).
+
+~30 types de props 3D différents (sapins, rochers, crânes de zombie, arbres morts noués, barils rouillés, réacteurs, laves, neige…) dispersés avec anti-collision (`scatterProps` dans `src/game.js`).
+
+---
+
+## 💰 Économie & Boutique
+
+**Pendant la partie** : récompense par kill (8/10/18 🪙), bonus d'avance de vague (+2 🪙/s restant), revenus de la Ferme. À la fin (victoire **ou** game over), l'ensemble des pièces gagnées est **mémorisé dans la cagnotte permanente** — plus le mode est difficile, plus la victoire rapporte (voir le tableau des modes).
+
+### Boutique — catalogue complet
 | Catégorie | Items | Prix 🪙 |
 |---|---|---|
-| Tours | Frost, Flame, Mortar | 5000 / 5000 / 3000 |
-| Niveaux avancés (tours possédées) | Lv3 / Lv4 / Lv5 par tour | 1200 / 3000 / 7000 |
-| Skins tours | Or Sacré, Acier Fantôme, Cœur de Magma | 1200 / 1500 / 1800 |
-| Skins maison | Maison Enchantée, Château de Cristal, Manoir Hanté | 2500 / 3000 / 2000 |
-| ⚡ Mode Auto-Wave | bouton Auto du HUD (départ immédiat des vagues) | **10 000** |
-| ⚡ Vitesse | ×4 — ×6 | **5 000** / **20 000** |
+| Tours (débloquage) | Frost · Flame · Mortar · Électro · Minigun · Ferme | 5 000 · 5 000 · 3 000 · 6 000 · 4 500 · 7 000 |
+| Niveaux avancés (par tour possédé) | Lv3 · Lv4 · Lv5 | 1 200 · 3 000 · 7 000 |
+| Skins de tours | Or Sacré · Acier Fantôme · Cœur de Magma | 1 200 · 1 500 · 1 800 |
+| Skins de maison | Maison Enchantée · Château de Cristal · Manoir Hanté | 2 500 · 3 000 · 2 000 |
+| ⚡ Vitesse | ×4 · ×6 | 5 000 · 20 000 |
+| ⚡ Mode Auto-Wave | vagues enchaînées sans délai (bouton Auto du HUD) | 10 000 |
+
+Les aperçus 3D de la Boutique, de l'Inventaire et des panneaux de tour sont des **rendus offscreen temps réel** du vrai modèle 3D (`Ui._pvImg`, scène Three.js hors écran avec caméra auto-cadrée sur la bounding box).
 
 ---
 
-## 🎨 Skins & aperçus 3D
+## 🎨 Skins & structures 3D
 
-- Les skins appliquent une **teinte + finitions PBR** (metalness/roughness/transparence selon le skin) **et des géométries distinctives ajoutées** (`buildSkinDecor` dans `src/assets.js`) : bagues dorées, éclats de cristal, braises de magma, runes flottantes, brouillard spectral… pas juste un changement de couleur.
-- **Aperçus 3D réels partout** (boutique, inventaire, panneau de tour) rendus via `Ui._pvImg(key, px)` : scène offscreen Three.js avec lumière hémisphérique + directionnelle, caméra auto-cadrée sur la bounding box (distance ×2.4 pour ne jamais couper les décorations), rendu en data-URL PNG. Préfixes de clés : `t:` tour, `sk:` tour+skin, `h:`/`hb:` maison, `z:` zombie, `b:` boss.
+- **Skins de tours** : teinte + finitions PBR (metalness/roughness/opacity) **et décorations géométriques distinctives** (`buildSkinDecor` dans `src/assets.js`) — bagues dorées, éclats de cristal, braises de magma…
+- **Skins de maison** : `buildBaseSkinDecor` construit de **vraies structures** autour de la demeure (coordonnées absolues, 1 unité = 1 m) :
+  - *Maison Enchantée* : cercle de 8 menhirs runiques, sigile lumineux au sol, cristal arcanique sur le faîtage, runes en lévitation.
+  - *Château de Cristal* : plateforme de glace, muraille de 9 pics de cristal, grand cristal royal sur le toit.
+  - *Manoir Hanté* : tombeaux penchés, arbre mort, 4 spectres flottants, brume verte, lanterne courbée.
+- **Favicon** : `public/favicon.svg` (tête de zombie au-dessus du toit), branché dans `index.html`.
+
+---
+
+## ⚙️ Paramètres (menu principal)
+
+Panneau dédié : **Particules** (Faible / Moyen / Max), **Cadavres visibles simultanés** (5 / 10 / 20 / 40 / 80), **Son** (on/off), et le **reset de progression** (efface la sauvegarde après confirmation).
+
+## 🔊 Audio
+
+100 % synthétisé en WebAudio (zéro asset) : tirs distincts par tour, impacts, morts, placements, achats, alarme de vague, coup à la base, fanfare de victoire et glissando de défaite. Throttlé (< 1 son / 55 ms) et coupable dans les Paramètres.
 
 ---
 
 ## 🏗️ Architecture du code
 
 ```
-index.html          Structure HUD (barre du haut : pièces/vague/PV base + Speed/Auto/Pause),
-                    panneau de construction en bas, overlay plein écran pour Menu/Boutique/Inventaire/Pause…
-src/main.js         Bootstrap 3D : renderer (antialiasing, shadowMap PCFSoft, tone mapping ACES,
-                    pixelRatio capped à 1.75), caméra orbitale, boucle RAF avec delta clampé ≤0.1s
-src/scene.js        Scene, lumières (hémisphérique + directionnelle ombrée + points par thème),
-                    terrain (relief sinusoïdal aplati près du chemin), route (ruban Catmull-Rom
-                    centrifuge/corrélatif largeur 2.6, dégradé de teintes par sommet DoubleSide),
-                    props thématiques (12 types : sapins/rochers/pavillons/antennes… + volcan actif)
-src/path.js         Waypoints + CatmullRomCurve3 « centripetal » — échantillonnage pour la collision
-src/config.js       CONFIG central : tours, zombies, vagues générées (buildWaves), thèmes, prix shop,
-                    damageGrowth 1.32/niveau, plafonds de niveaux… + SHOP_TOWER_DESC / ZOMBIE_TEXTS fr
-src/entities.js     Classes Tower (ciblage first/strongest/nearest/closer/farther, modes mine/flame,
-                    pétification), Zombie (HP bar au-dessus de la tête, animation de marche avec bras,
-                    mort en deux temps), Projectile (trajectoires droites/en arc, flammes)
-src/vfx.js          Particules (mort/éclats/ice/snow/magma), flash de base, screen shake,
-                    rayons de tour… — tout est pur, pas d'allocs par frame dans la boucle chaude
-src/ui.js           Toute l'interface DOM : menu, boutique (aperçus + cases de niveaux), inventaire,
-                    panneau de tour, bannières, HUD. Fonctions de rendu _pvImg/_modelFor/applySkin…
-src/input.js        Clics souris → placement fantôme / sélection, clavier B/X/P/Échap
-src/game.js         Game loop : état (MENU/PLAYING/PAUSED/GAMEOVER/WIN), spawn par vague, thèmes,
-                    économie, achats (tours/niveaux/skins/vitesse), capacités des boss, récompenses
-src/save.js         loadSave/persistSave (localStorage `ztd_save_v1`), DEFAULT_SAVE complet, SHOP
-                    catalogue (prix tours/niveaux/skins + vitesses x4/x6) — les données saturent sur l'ancien state à chaque charge (merge défensif)
-src/style.css       Thème sombre du jeu + style de tous les overlays (boutique compacte par lignes,
-                    inventaire pleine largeur avec bascule catalogue monstres, panneaux de détails…)
+index.html          Structure du HUD + overlay plein écran (menu/boutique/inventaire/pause…) + favicon
+src/main.js         Bootstrap 3D : renderer (ACES, PCFSoft shadows, pixelRatio ≤1.75), caméra orbitale,
+                    boucle RAF (delta clampé ≤0.1 s), exposition des handles de test (window.__game, __CONFIG, __terrainHeight)
+src/scene.js        Scène, lumières, relief sinusoïdal aplati près du chemin, ruban du chemin (Catmull-Rom
+                    centripetal, DoubleSide), props thématiques (scatterProps), maison (createBaseModel)
+src/path.js         Waypoints (12) + échantillonnage du spline pour collision / placement
+src/config.js       Source de vérité : 9 tours, 3 zombies, 10 boss, 6 thèmes (props), 5 modes
+                    (DIFFICULTIES, buildModeWaves, buildInfiniteWave), courbes d'HP, prix…
+src/entities.js     Tower (ciblage first/strongest/nearest/closer/farther, zap en chaîne, ferme, mine,
+                    pétification/gel), Zombie (skins, barres de PV, mort en deux temps), Projectile
+src/vfx.js          Particules (mort/éclats/givre/laves), screen shake, flash de base, bursts de pièces
+src/ui.js           Toute l'interface DOM : menu, écran Difficulté (cartes + miniatures 3D), Boutique,
+                    Inventaire (détails, catalogue monstres), Paramètres, panneau de tour, bannières,
+                    rendu offscreen des aperçus (_pvImg / _modelFor / _shot)
+src/input.js        Souris (fantôme de placement, sélection), clavier (1–6, Espace, U, S, P, Échap)
+src/game.js         Game loop : états (MENU/PLAYING/PAUSED/GAMEOVER/WIN), modes & vagues, thèmes,
+                    économie (bonus d'avance, bank de pièces, refund 50 %), boss & capacités, achats
+src/save.js         loadSave/persistSave (localStorage ztd_save_v1), DEFAULT_SAVE, catalogue SHOP
+src/sound.js        Synthèse WebAudio (lazy AudioContext, throttle)
+src/style.css       Thème sombre + styles de tous les écrans
+public/favicon.svg  Icône du navigateur
 ```
 
-**Détails d'implémentation notables :**
-- Les **matériaux ne sont jamais partagés globalement** entre entités (mutations par instance : emissive du petrify, retinte des skins zombies, opacité des wraiths) — seul le cache de géométries est partagé (`_geoCache` dans `assets.js`, ≈ 18 % d'allocations en moins).
-- Performance : pas de PointLight par projectile (place leur une glow émissive), pixelRatio borné, delta clampé à 0.1 s, `frustumCulled=false` sur les éléments critiques pour éviter les flickers de culling.
-- L'exposition globale de debug/test : `window.__game`, `window.__CONFIG`, `window.__terrainHeight` (utilisée par des scripts Puppeteer de test automatisé).
+**Détails d'implémentation notables**
+- Les **matériaux ne sont jamais partagés globalement** (mutations par instance : teintes de skins, opacité du wraith, glow du petrify) ; seul le cache de géométries est partagé (`_geoCache`).
+- Performance : pas de PointLight par projectile (glow émissive), pixelRatio borné, delta clampé, `frustumCulled=false` sur les éléments critiques.
+- `window.__game`, `window.__CONFIG`, `window.__terrainHeight` sont exposés pour les scripts de test Puppeteer.
 
 ---
 
 ## 🧪 Tests automatisés
 
-Puppeteer-core en headless avec Chrome existant (`~/.cache/puppeteer/chrome/...`) et drapeaux WebGL :
-```
---use-gl=angle --use-angle=swiftshader
-```
-Les scripts `_cp*.cjs` (menu, placement, upgrades, boutique, skins, HUD…) vérifient l'absence d'erreurs console et le comportement des mécaniques dans le navigateur. Le build de production doit rester propre (`npm run build`).
+Puppeteer-core headless (Chrome existant) avec drapeaux WebGL logiciels : `--use-gl=angle --use-angle=swiftshader`. Les scripts `_*.cjs` (menu, placement, boutique, skins, modes, régressions de boutons…) vérifient l'absence d'erreurs console et le comportement des mécaniques ; le build de production doit rester propre (`npm run build`).
 
 ---
 
-## 🔁 Derniers ajouts (journal)
+## 📐 Notes de design
 
-**↩️ Bouton « ← Retour au menu » unifié**
-
-- Sur les 4 écrans du menu (Difficulté, Boutique, Inventaire, Paramètres), le bouton retour n'avait ni la même position ni la même taille : en haut et tout-en-largeur dans l'Inventaire (victime de la règle `#screen.wide .inv-wrap > * { width:100% }`), en bas et centré dans Paramètres et Difficulté, petit en haut à gauche dans la Boutique. Désormais tous identiques : **pilule compacte (146 px) en haut à gauche du contenu**, avec un léger survol, sur les 4 écrans (`src/ui.js` + `src/style.css`).
-
-**🐛 Corrections de bugs (boutons morts)**
-
-- **Inventaire → détail tour → « Lv 2 » → bouton 🎨 Skins mort** : le changement de niveau re-génère tout le panneau (`innerHTML`), or les listeners du bouton Skins (et des chips de skins) n’étaient liés qu’au premier rendu → orphelins après un clic niveau. Désormais re-liés à **chaque** rendu (`renderTowerDetail` dans `src/ui.js`), et le panneau de skins reste ouvert/fermé d’un niveau à l’autre. La branche tour ne se lie plus qu’une seule fois (pas de double-événement).
-- **Bouton « Resume » fantôme après « ✕ Quitter »** : l’écran de pause posait son bouton « Resume » dans `#screen-btns`, mais `showMenu`/`showShop`/`showInventory`… ne viraient jamais ce conteneur → un vieux bouton « Resume » restait affiché sous le menu, et le cliquer ne faisait rien (l’état est `MENU`, pas `PAUSED`). `_setScreenMode` vide désormais les boutons `screen-action` de `#screen-btns` à chaque écran de menu (`src/ui.js`).
-
-**🌅 Cartes plus denses + skins de maison à part entière + icône navigateur**
-
-- **Les 6 cartes sont plus riches** : chaque thème reçoit des dizaines de props supplémentaires (plus de rochers, buissons, herbe, fleurs, décombres) et 3 **nouveaux décors 3D** (`skull` crâne de zombie, `deadtree` arbre mort noué, `barrel` baril rouillé à bandes de fer) dans `src/assets.js`, déclarés dans les listes `props:` de `src/config.js`. Les rayons de collision / anti-collision du scatter sont dans `scatterProps` (`src/game.js`).
-- **Les 3 skins de maison ne sont plus que du changement de couleur** : `buildBaseSkinDecor` (dans `src/assets.js`) construit de **vraies structures 3D** posées autour de la demeure (coordonnées absolues, 1 unité = 1 m) :
-  - *Maison Enchantée* : cercle de 8 menhirs runiques, sigile lumineux gravé au sol, cristal arcanique sur le faïtage, runes en lévitation, 2 piliers de porte runiques.
-  - *Château de Cristal* : plateforme de glace sous la maison, muraille de 9 pics de cristal, gros cristal royal sur le toit, cristaux épars.
-  - *Manoir Hanté* : cercle de tombeaux penchés, arbre mort noué, 4 spectres flottants, brume verte basse, grande lanterne courbée.
-  - Le dispatch se fait dans `buildSkinDecor(id, scale, big)` (le flag `big` = modèle de maison >2 m de haut).
-- **Icône navigateur** : `public/favicon.svg` (tête de zombie sur le toit de la base), branchée dans `<head>` d’`index.html` via `<link rel="icon">` + `apple-touch-icon`. Copiée automatiquement dans `dist/` au build.
-
-**🚨 Règle d'or du boss à la base** : un boss qui parvient jusqu'à votre maison **vous élimine instantanément**, quel que soit le PV restant (même 20/20). Avant, il ne retirait que 8–16 PV selon sa taille — désormais son passage en force est définitif.
-
-**⚖️ Dégâts infligés à la base par ennemi** (base = 20 PV de départ) :
-
-| Ennemi | Dégâts/leak |
-|---|---|
-| Walker / Fast (zombies ordinaires, toute zone) | **2** |
-| Tank / zombie sale (ashlands), boss vagues 10–30 (Brute, Stalker, Frost King, Pyro Lord, Abomination, Runner, Regenerator) | **5 → 8–12** selon le boss (Pyro Lord : 10, Abomination/Runner/Regenerator : 12) |
-| Boss lourds — Stone Golem, Wraith | **14** |
-| The Titan (vague 90, 3200 PV) | **16** |
-| **Boss à la base (tous)** | **mort instantanée de la partie** 🚨 |
-
-Soit : ~5–8 zombies ordinaires qui se faufilent = défaite ; un seul boss = toujours game over.
-
-**🔊 Sons ajoutés (synthèse WebAudio, zéro asset)** :
-- Tirs distincts par tour : Gunner *tic-ping*, Sniper *boum* grave, Frost *fzzz glacé*, Mortier *choc sourd*, Flame *rugissement de feu*
-- Impacts des projectiles + mort zombie (pop descendante ; boss = double couche grave)
-- Placement de tour (clac + ping), vente, achat boutique (montée tri-tones), upgrade (escalade)
-- Alarme two-tone au lancement d'une vague, gong grave + choc quand la base encaisse
-- Fanfare de victoire (4 notes montantes) et glissando de défaite (320 Hz → 60 Hz)
-- Le tout throttle (<1 tir son/55 ms) pour rester discret et léger — coupable dans ⚙ Paramètres → Son Off.
-
-**⚖️ Équilibrage (v2)** : courbe d'PV zombie adoucie (+11 %/vague au lieu de +13 %, terme quadratique ÷2 : vague 50 ≈ 11,2 au lieu de ~15,8) et croissance des tours relevée à **×1,36/niveau** — les tours niveau 5 restent compétitives en fin de partie.
-
-**⚙️ Paramètres (menu)** : Particules Faible/Moyen/Max · Cadavres visibles 5–80 · Son on/off · Reset progression. Le gros bouton « Réinitialiser » est devenu un petit **⚙ Paramètres** avec ce panneau.
-
-**🗺️ 6e zone radioactive** (dôme, barils, plots jaune/noir, flore mutante) + props enrichis sur ashlands/haunted — cycles automatiques tous les 5 vagues.
+- **Tout est procédural** : zéro modèle, son ou texture externe — le projet tient dans le navigateur sans aucun asset.
+- L'équilibrage repose sur des **courbes multiplicitives douces** (dégâts ×1,36/niveau, PV de vagues linéaires + quadratique légère) plutôt que des bonus additifs.
+- Les modes finis ont chacun **leur carte dédiée** ; l'Infini fait vivre les 6 thèmes.
+- Les upgrades de tours restent achetables **par tour type** (plafonds individuels) — on n'achète jamais de niveaux inutiles.
 
 ---
 
-## 📌 Notes / décisions de design
+## 📜 Journal des ajouts
 
-- **Pas de modèles externes** : tout est procedural Three.js (primities), donc zéro asset à gérer.
-- La difficulté monte en fin de partie : scaling quadratique des PV + boss capables d'attaquer vos tours, d'invoquer des minions et de vous lancer des projectiles.
-- Le bouton « Map » du HUD a été retiré : le thème change automatiquement (voir la table plus haut).
-- Les upgrades sont équilibrés en **courbe multiplicative douce** plutôt qu'en bonus additifs disproportionnés.
-
----
-
-## Modes de difficulté (style TDS) — nouvelle session
-
-La liste unique de 100 vagues est remplacée par **4 modes + Infini**, chacun sur SA
-propre carte, avec mini-boss toutes les 5 vagues et un boss final distinct :
-
-| Mode | Vagues | Carte | PV base | Pièces départ | Boss final | Débloqué si… |
-|---|---|---|---|---|---|---|
-| **Débutant** | 25 | Cendres / dirt 🪨 | 40 | 350 💰 | `brute` (stun) | par défaut |
-| **Moyen** | 30 | Neige ❄️ | 40 | 280 💰 | `abomination` (régénération) | gagné Débutant |
-| **Avancé** | 35 | Volcan 🌋 | 40 | 220 💰 | `wraith` (freeze + téléport) | gagné Moyen |
-| **Impossible** | 40 | Zone radioactive ☢️ | 35 | 180 💰 | `titan` (pétrification, golem, boss) | gagné Avancé |
-| **∞ Infini** | — | toutes les cartes en rotation | 40 | 200 💰 | boss cyclés, vagues générées à la volée | toujours |
-
-- **Mini-boss** (vague 5, 10, 15…) : dégâts = **½ des PV de base du mode** — ils
-  blessent fort sans tuer d'un coup ; les mini-boss se renforcent avec l'index de vague.
-- **Boss final** : dégâts = PV base complets (1 touché = game over sur ce point).
-- Verrouillage progressif persistant (`saveData.completed`), boutons désactivés + tooltip.
-
-### Carte agrandie & path zigzag
-Terrain maintenant **68 × 52** (contre 40×30) : plus de place constructive, bordures
-naturelles visibles au-delà des cases (bushes/rocks/réacteurs…), path en S à **12 points
-d'inflexion**. Borne buildable = `CONFIG.mapBounds`.
-
-### 3 nouvelles tours (inspirées TDS) → **9 au total**
-
-| Tour | Prix | Cooldown | Portée | Comportement | Niveau max |
-|---|---|---|---|---|---|
-| ⚡ **Shock** (`shock`) | 1500 | 0.8 s | 3.4 | Arc électrique instantané, enchaîne jusqu'à 2 cibles à -35 % | 6 |
-| 🔫 **Gatling** (`gatling`) | 1200 | 0.25 s (volley de 3) | 4.6 | Salves rapides de balles, DPS élevé contre les nuées de walkers | 7 |
-| 🌾 **Farm** (`farm`) | 900 | toutes les 5 s | — | Génère des pièces périodiques (+ bonus par niveau) ; pas d'attaque | 6 |
-
-Toutes intègrent la courbe standard (dégâts ×1.36/niveau ou revenus croissants),
-les skins du catalogue, la boutique de niveaux et le panel d'infos du HUD.
-
-### Divers
-- Écran « Jouer » affiche le nom du mode sélectionné ; HUD `Vague x / N` selon le mode
-  (`∞` en Infini) ; barre PV de base normalisée au max du mode.
-- Gagner un mode l'enregistre dans la sauvegarde et débloque le suivant (persistance).
-
-### Écrans dédiés & récompenses de difficulté (refonte du menu)
-Le menu principal ne contient plus que 5 boutons propres :
-**Jouer** (dernier mode sélectionné), **Difficulté**, **Boutique**, **Inventaire**, **Paramètres**.
-
-- **Difficulté** → écran dédié : 5 cartes illustrées (SVG dessinés, aucun fichier
-  externe : ciel + sol + chemin + maison + zombie + emblème propre à chaque carte),
-  nom, nombre de vagues, récompense, état verrouillé/débloqué et bouton *Jouer*.
-- **Paramètres** → écran dédié (particules, cadavres, son, réinitialisation) avec
-  bouton retour ; plus de panneau qui s'empilait dans le menu.
-- **Récompense de victoire croissante** : Débutant +500 🪙 · Moyen +1 000 🪙 ·
-  Avancé +2 500 🪙 · Impossible +5 000 🪙 (Infini : survie, sans bonus).
-  Le bonus s'ajoute aux pièces de la partie à l'écran *Victory* et persiste.
+- **Bouton « ← Retour au menu » unifié** sur les 4 écrans du menu (haut à gauche, même pilule) + **corrections de boutons morts** (bouton Skins du détail tour après changement de niveau ; bouton « Resume » fantôme après « ✕ Quitter »).
+- **Cartes plus denses** : 3 nouveaux props 3D (crâne, arbre mort noué, baril rouillé) + dizaines de props supplémentaires par thème ; **skins de maison devenus de vraies structures 3D** (menhirs, pics de glace, tombeaux) ; **favicon** navigateur.
+- **Règle d'or** : un boss à la base = défaite instantanée (mini-boss compris).
+- **Sons** WebAudio complets (tirs par tour, alarmes, fanfares) + **Paramètres** (particules, cadavres, son, reset) ; **équilibrage v2** (courbes adoucies, tours Lv5 compétitives).
+- **6e thème** ☢️ (dôme, barils, plots jaune/noir, flore mutante) + props enrichis ashlands/haunted.
+- **Skins de tours avec géométries distinctives** + **aperçus 3D réels** (boutique, inventaire, panneaux) via renderer offscreen.
+- **Modes de difficulté TDS** : 4 campagnes (25/30/35/40 vagues) + Infini, cartes dédiées, mini-boss toutes les 5 vagues, boss final par mode, **déverrouillage progressif persistant**, bonus de victoire (500→5 000 🪙).
+- **3 nouvelles tours** (Électro, Minigun, Ferme) → 9 au total ; **vitesse ×4/×6** et **Mode Auto-Wave** achetables ; carte agrandie 68×52 avec chemin en S.

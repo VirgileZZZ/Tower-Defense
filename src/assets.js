@@ -133,7 +133,7 @@ function _applySkinDecor(model, id) {
   } catch {}
   const key = id + (big ? ':big' : '');
   let tmpl = _skinDecorCache.get(key);
-  if (!tmpl) { tmpl = buildSkinDecor(id, big ? 2.6 : 1); _skinDecorCache.set(key, tmpl); }
+  if (!tmpl) { tmpl = buildSkinDecor(id, big ? 2.6 : 1, big); _skinDecorCache.set(key, tmpl); }
   const inst = tmpl.clone(true); // live instance per model
   try { model.add(inst); } catch {}
   model.userData._skinDecor = inst;
@@ -144,7 +144,12 @@ function _applySkinDecor(model, id) {
 // so Or Sacré / Fantôme / Magma / Enchantée / Cristal / Hanté all read as
 // genuinely different builds in shop previews and on the live battlefield.
 const _skinDecorCache = new Map();
-export function buildSkinDecor(id, scale = 1) {
+export function buildSkinDecor(id, scale = 1, big = false) {
+  // Les skins de maison ont des structures 3D à part entière (coordonnées
+  // absolues de la demeure : sol à y=0, toit ≈ y=4.3, perron côté +z)
+  if (big && (id === 'enchanted' || id === 'crystal' || id === 'haunted')) {
+    return buildBaseSkinDecor(id);
+  }
   const g = new THREE.Group();
   const gold   = mat(0xd9a324, { metalness: 1.0, roughness: 0.25 });
   const goldGlow = mat(0xffc84a, { emissive: 0xffb63a, emissiveIntensity: 1.2, metalness: .9, roughness: .3 });
@@ -212,6 +217,117 @@ export function buildSkinDecor(id, scale = 1) {
     lant.position.set(1.1, 0.45, 0.9); g.add(lant);
   }
   g.scale.setScalar(Math.max(0.6, Math.min(scale, 3.4)));
+  return g;
+}
+
+// ===================================================================== BASE SKINS (vraies structures 3D)
+// Coordonnées absolues : la maison s'étend de y=0 (sol) à ≈4.3 (faîtage),
+// corps 3.4 × 2.8, perron/lanternes côté +z. Pas de scale — 1 unit = 1 m.
+function buildBaseSkinDecor(id) {
+  const g = new THREE.Group();
+  if (id === 'enchanted') {
+    const stone = mat(0x6a5a7a, { roughness: 0.9, metalness: 0.15 });
+    const rune  = mat(0x8b5cf6, { emissive: 0xb07aff, emissiveIntensity: 1.5, metalness: 0.4, roughness: 0.3 });
+    // Cercle de 8 menhirs runiques
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + 0.4;
+      const h = rand(1.0, 1.6);
+      const m = box(0.22, h, 0.4, stone);
+      m.position.set(Math.cos(a) * 4.3, h / 2, Math.sin(a) * 4.3);
+      m.rotation.y = -a + Math.PI / 2;
+      m.rotation.z = rand(-0.06, 0.06);
+      g.add(m);
+      const p = box(0.5, 0.14, 0.6, mat(0x4a4058, { roughness: 1 }));
+      p.position.set(Math.cos(a) * 4.3, 0.07, Math.sin(a) * 4.3);
+      g.add(p);
+    }
+    // Cercle magique gravé au sol
+    const ring = new THREE.Mesh(new THREE.RingGeometry(2.6, 3.0, 40),
+      mat(0xb07aff, { emissive: 0xb07aff, emissiveIntensity: 1.6, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; g.add(ring);
+    const ring2 = new THREE.Mesh(new THREE.RingGeometry(2.0, 2.12, 40),
+      mat(0xb07aff, { emissive: 0xb07aff, emissiveIntensity: 1.1, transparent: true, opacity: 0.45, side: THREE.DoubleSide }));
+    ring2.rotation.x = -Math.PI / 2; ring2.position.y = 0.05; g.add(ring2);
+    // Reliquaire cristallin sur le faîtage
+    const c1 = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), rune);
+    c1.position.set(0, 4.8, 0); g.add(c1);
+    const c2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), rune);
+    c2.position.set(0.5, 4.25, 0.3); g.add(c2);
+    // Runes en lévitation autour de la demeure
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.8;
+      const r = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), rune);
+      r.position.set(Math.cos(a) * 3.0, 2.3 + (i % 3) * 0.6, Math.sin(a) * 3.0);
+      g.add(r);
+    }
+    // Piliers de porte runiques de chaque côté du perron
+    for (const s of [-1, 1]) {
+      const p = cyl(0.14, 0.18, 2.7, stone, 8); p.position.set(s * 1.9, 1.35, 3.3); g.add(p);
+      const t = box(0.6, 0.18, 0.5, rune); t.position.set(s * 1.9, 2.78, 3.3); g.add(t);
+    }
+  } else if (id === 'crystal') {
+    const ice  = mat(0xcfefff, { emissive: 0x8fdfff, emissiveIntensity: 0.6, transparent: true, opacity: 0.72, roughness: 0.06, metalness: 0.35 });
+    const ice2 = mat(0xa8dcff, { emissive: 0x6fd0ff, emissiveIntensity: 0.9, transparent: true, opacity: 0.85, roughness: 0.05, metalness: 0.4 });
+    // Plateforme de glace sous la demeure
+    const plat = cyl(5.4, 5.9, 0.22, ice, 10); plat.position.y = 0.1; g.add(plat);
+    // Muraille de pics de cristal autour de la maison
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + 0.3;
+      const h = rand(1.6, 3.6);
+      const s = new THREE.Mesh(new THREE.ConeGeometry(rand(0.25, 0.5), h, 5), i % 2 ? ice : ice2);
+      s.position.set(Math.cos(a) * rand(3.8, 4.8), h / 2 + 0.1, Math.sin(a) * rand(3.8, 4.8));
+      s.rotation.z = rand(-0.25, 0.25);
+      g.add(s);
+    }
+    // Gros cristal royal sur le toit
+    const big = new THREE.Mesh(new THREE.OctahedronGeometry(0.75, 0), ice2);
+    big.position.set(0, 4.6, 0); big.rotation.y = 0.6; g.add(big);
+    const b2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), ice);
+    b2.position.set(-0.7, 4.1, -0.4); g.add(b2);
+    // Cristaux épars dans la cour
+    for (let i = 0; i < 5; i++) {
+      const a = rand(0, Math.PI * 2);
+      const c = new THREE.Mesh(new THREE.OctahedronGeometry(rand(0.12, 0.22), 0), ice);
+      c.position.set(Math.cos(a) * rand(2.3, 3.4), 0.15, Math.sin(a) * rand(2.3, 3.4));
+      g.add(c);
+    }
+  } else if (id === 'haunted') {
+    const bone = mat(0x5a6a58, { roughness: 0.95 });
+    const spec = mat(0x4aff8a, { emissive: 0x4aff8a, emissiveIntensity: 1.2, transparent: true, opacity: 0.55, roughness: 0.2 });
+    const wood = mat(0x2e332c, { roughness: 1 });
+    // Cercle de tombeaux penchés
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.5;
+      const t = box(0.5, rand(0.7, 1.1), 0.14, bone);
+      t.position.set(Math.cos(a) * 4.5, 0.5, Math.sin(a) * 4.5);
+      t.rotation.y = -a; t.rotation.z = rand(-0.22, 0.22); t.rotation.x = rand(-0.12, 0.12);
+      g.add(t);
+    }
+    // Arbre mort noué
+    const trunk = cyl(0.1, 0.24, 2.8, wood, 7); trunk.position.set(-3.6, 1.4, -2.8); trunk.rotation.z = 0.12; g.add(trunk);
+    for (let i = 0; i < 4; i++) {
+      const b = cyl(0.03, 0.08, rand(0.9, 1.5), wood, 6);
+      const a = (i / 4) * Math.PI * 2 + 0.9;
+      b.position.set(-3.6 + Math.cos(a) * 0.35, 2.1 + (i % 2) * 0.4, -2.8 + Math.sin(a) * 0.35);
+      b.rotation.set(Math.sin(a) * 0.9, a, Math.cos(a) * 0.9);
+      g.add(b);
+    }
+    // Spectres flottants
+    for (let i = 0; i < 4; i++) {
+      const a = 1 + i * 1.7;
+      const w = sphere(0.2 + i * 0.03, spec);
+      w.position.set(Math.cos(a) * rand(2.4, 3.6), 1.6 + i * 0.5, Math.sin(a) * rand(2.4, 3.6));
+      g.add(w);
+    }
+    // Brume verte basse
+    const fog = new THREE.Mesh(new THREE.CircleGeometry(5.8, 28),
+      mat(0x4aff8a, { emissive: 0x2a8a5a, emissiveIntensity: 0.5, transparent: true, opacity: 0.16, side: THREE.DoubleSide }));
+    fog.rotation.x = -Math.PI / 2; fog.position.y = 0.12; g.add(fog);
+    // Grande lanterne courbée
+    const post = cyl(0.07, 0.09, 2.4, wood, 7); post.position.set(3.2, 1.2, 3.0); post.rotation.z = 0.1; g.add(post);
+    const lant = box(0.3, 0.36, 0.3, mat(0x1c2a22, { emissive: 0x4aff8a, emissiveIntensity: 1.6, roughness: 0.4 }));
+    lant.position.set(3.26, 2.5, 3.0); g.add(lant);
+  }
   return g;
 }
 
@@ -397,6 +513,111 @@ function towerBase(radius, height, color, opts = {}) {
   return { base, deckY: 0.18 + height };
 }
 
+// ---- Tour ÉLECTRO (chaîne d'électricité) : base sombre + bobine lumineuse --
+function towerShock() {
+  const model = new THREE.Group();
+  model.name = 'tower-shock';
+  const root = box(1.3, 0.5, 1.3, mat(0x2c3240, { metalness: 0.7, roughness: 0.35 }));
+  root.position.y = 0.3;
+  model.add(root);
+  const post = cyl(0.18, 0.26, 0.9, mat(0x4a5266, { metalness: 0.6, roughness: 0.4 }), 10);
+  post.position.y = 0.9;
+  model.add(post);
+  // bobine (spire de Tesla) : sphère + anneau + filament émissif
+  const coilMat = mat(0x7ef5e6, { emissive: 0x39ffd8, emissiveIntensity: 1.5, metalness: 0.4 });
+  const orb = sphere(0.26, coilMat);
+  orb.position.y = 1.62; model.add(orb);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.045, 8, 24), mat(0x9aa7bd, { metalness: 0.8, roughness: 0.3 }));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 1.4; model.add(ring);
+  // arcs latéraux
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.6;
+    const rod = cyl(0.03, 0.05, 0.5, coilMat, 8);
+    rod.position.set(Math.cos(a) * 0.42, 1.3, Math.sin(a) * 0.42);
+    rod.rotation.z = -Math.cos(a) * 0.9;
+    model.add(rod);
+  }
+  const sparkLight = new THREE.PointLight(0x66ffe8, 1.4, 5, 2);
+  sparkLight.position.y = 1.7; sparkLight.name = 'spark';
+  model.add(sparkLight);
+  // petite couronne de base
+  const crown = cyl(0.62, 0.78, 0.34, mat(0x232935, { metalness: 0.5 }), 12);
+  crown.position.y = -0.02; model.add(crown);
+  model.userData.parts = { root, post, orb };
+  return model;
+}
+
+// ---- Tour MINIGUN (tir très rapide) : socle + tourelle à barils multiples --
+function towerGatling() {
+  const model = new THREE.Group();
+  model.name = 'tower-gatling';
+  const base = box(1.5, 0.5, 1.2, mat(0x3d4a3e, { metalness: 0.5, roughness: 0.5 }));
+  base.position.y = 0.28; model.add(base);
+  const mount = box(0.9, 0.5, 1.6, mat(0x55634f, { metalness: 0.6, roughness: 0.4 }));
+  mount.position.set(0, 0.85, -0.2); model.add(mount);
+  const turret = new THREE.Group();
+  const hub = cyl(0.34, 0.34, 0.5, mat(0x6b7a63, { metalness: 0.7, roughness: 0.3 }), 12);
+  hub.rotation.x = Math.PI / 2; turret.add(hub);
+  // 5 barils circulaires + canon central
+  const barrelMat = mat(0x8d9b84, { metalness: 0.85, roughness: 0.25 });
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const b = cyl(0.035, 0.045, 1.1, barrelMat, 8);
+    b.rotation.x = Math.PI / 2;
+    b.position.set(Math.cos(a) * 0.18, Math.sin(a) * 0.18, 0.6); turret.add(b);
+  }
+  const center = cyl(0.05, 0.06, 1.25, barrelMat, 8);
+  center.rotation.x = Math.PI / 2; center.position.z = 0.7; turret.add(center);
+  const motor = box(0.5, 0.4, 0.5, mat(0x39423a, { metalness: 0.6 }));
+  motor.position.y = -0.15; turret.add(motor);
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0, 1.3); turret.add(muzzle);
+  turret.position.set(0, 1.15, -0.2);
+  model.add(turret);
+  // portière de munitions
+  const drum = cyl(0.22, 0.28, 0.34, mat(0x7a6b3f, { metalness: 0.7, roughness: 0.4 }), 10);
+  drum.position.set(-0.55, 0.95, -0.5); model.add(drum);
+  model.userData.parts = { base, mount, turret, muzzle };
+  return model;
+}
+
+// ---- Tour FERME (générateur d'or) : table de bois + planter de légumes ----- 
+function towerFarm() {
+  const model = new THREE.Group();
+  model.name = 'tower-farm';
+  const legsMat = mat(0x6d543a, { roughness: 0.9 });
+  for (const [lx, lz] of [[-0.55,-0.55],[0.55,-0.55],[-0.55,0.55],[0.55,0.55]]) {
+    const leg = box(0.12, 0.7, 0.12, legsMat);
+    leg.position.set(lx, 0.35, lz); model.add(leg);
+  }
+  const table = box(1.5, 0.14, 1.5, mat(0x8a6b45, { roughness: 0.8 }));
+  table.position.y = 0.76; model.add(table);
+  // terreau
+  const dirt = box(1.24, 0.1, 1.24, mat(0x3e2f20, { roughness: 1 }));
+  dirt.position.y = 0.86; model.add(dirt);
+  // plants de légumes
+  const leaf = mat(0x57b36a, { roughness: 0.7 });
+  for (let i = 0; i < 9; i++) {
+    const gx = ((i % 3) - 1) * 0.42;
+    const gz = (Math.floor(i / 3) - 1) * 0.42;
+    const st = cyl(0.02, 0.02, 0.28, leaf, 6);
+    st.position.set(gx, 1.05, gz); model.add(st);
+    const head = sphere(0.09, mat(0x7ede8a, { roughness: 0.6 }));
+    head.position.set(gx, 1.24, gz); head.scale.y = 1.25; model.add(head);
+  }
+  // seau à côté
+  const bucket = cyl(0.14, 0.18, 0.3, mat(0x6d7b8c, { metalness: 0.7, roughness: 0.35 }), 12);
+  bucket.position.set(-1.15, 0.5, 0.9); model.add(bucket);
+  // panais
+  for (let i = 0; i < 3; i++) {
+    const car = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 8), mat(0xe8693a, { roughness: 0.6 }));
+    car.position.set(-1.15 + i * 0.16, 0.62, 0.9); car.rotation.z = Math.PI / 2; model.add(car);
+  }
+  const glow = new THREE.PointLight(0xffd76a, 0.5, 3.4, 2);
+  glow.position.y = 1.5; model.add(glow);
+  return model;
+}
+
 export function createTowerModel(type = 'gunner') {
   switch (type) {
     case 'sniper':   return towerSniper();
@@ -404,6 +625,9 @@ export function createTowerModel(type = 'gunner') {
     case 'flame':    return towerFlame();
     case 'mortar':   return towerMortar();
     case 'mine':     return towerMine();
+    case 'shock':    return towerShock();
+    case 'gatling':  return towerGatling();
+    case 'farm':     return towerFarm();
     default:         return towerGunner();
   }
 }
@@ -1098,6 +1322,45 @@ function bossAbomination() {
 // PROPS (non-interactive scenery)
 // ---------------------------------------------------------------------------
 
+function propSkull() { // crâne de zombie au sol (détail macabre)
+  const g = new THREE.Group();
+  const bone = mat(0xd8d2c4, { roughness: 0.85 });
+  const dark = mat(0x1c1a16, { roughness: 1 });
+  const head = sphere(0.24, bone); head.position.y = 0.24; g.add(head);
+  const jaw = box(0.26, 0.12, 0.3, bone); jaw.position.set(0, 0.08, 0.04); g.add(jaw);
+  for (const s of [-1, 1]) {
+    const e = sphere(0.07, dark, 8, 6); e.position.set(s * 0.09, 0.28, 0.18); g.add(e);
+  }
+  const nose = box(0.05, 0.07, 0.05, dark); nose.position.set(0, 0.2, 0.22); g.add(nose);
+  return g;
+}
+
+function propDeadTree() { // arbre mort noueux (squelette de branches)
+  const g = new THREE.Group();
+  const bark = mat(0x4a4038, { roughness: 1 });
+  const trunk = cyl(0.08, 0.2, 2.4, bark, 7); trunk.position.y = 1.2; trunk.rotation.z = 0.08; g.add(trunk);
+  const brs = [[0.5, 1.7, 0.5, 0.9], [2.6, 1.4, -0.4, -1.1], [4.4, 2.0, 0.7, 0.7], [1.7, 2.15, -0.8, 1.3]];
+  for (const [a, y, rx, rz] of brs) {
+    const b = cyl(0.02, 0.06, rand(0.8, 1.4), bark, 5);
+    b.position.set(Math.cos(a) * 0.3, y, Math.sin(a) * 0.3);
+    b.rotation.set(rx, a, rz);
+    g.add(b);
+  }
+  return g;
+}
+
+function propBarrel() { // baril rouillé à bandes de fer
+  const g = new THREE.Group();
+  const rust = mat(0x7a4a2a, { metalness: 0.55, roughness: 0.75 });
+  const band = mat(0x3a342c, { metalness: 0.7, roughness: 0.5 });
+  const body = cyl(0.26, 0.3, 0.72, rust, 10); body.position.y = 0.36; g.add(body);
+  for (const y of [0.16, 0.58]) {
+    const b = cyl(0.285, 0.285, 0.07, band, 10); b.position.y = y; g.add(b);
+  }
+  const lid = cyl(0.27, 0.27, 0.05, band, 10); lid.position.y = 0.73; g.add(lid);
+  return g;
+}
+
 export function createProp(kind = 'tree') {
   switch (kind) {
     case 'rock':     return propRock();
@@ -1119,8 +1382,120 @@ export function createProp(kind = 'tree') {
     case 'lamp':     return propLamp();
     case 'fence':    return propFence();
     case 'sign':     return propSign();
+    case 'reactor':  return propReactor();
+    case 'rbarrel':  return propRBarrel();
+    case 'hstripes': return propHStripes();
+    case 'radplant': return propRadPlant();
+    case 'boulder':  return propBoulder();
+    case 'reeds':    return propReeds();
+    case 'skull':    return propSkull();
+    case 'deadtree': return propDeadTree();
+    case 'barrel':   return propBarrel();
     default:         return propTree();
   }
+}
+
+// --- Zone radioactive --------------------------------------------------
+function propReactor() { // dôme de confinement fêlé + trèfle radioactif pulsant
+  const model = new THREE.Group(); model.name = 'prop-reactor';
+  const concrete = mat(0x8a917e, { roughness: 0.95 });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.35, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), concrete);
+  dome.scale.y = 0.78; dome.castShadow = true; model.add(dome);
+  const baseC = cyl(1.65, 1.75, 0.34, mat(0x6e7466, { roughness: 1 }), 20); baseC.position.y = 0.17; model.add(baseC);
+  // fente de lumière radioactive traversant le dôme
+  const crackM = mat(0xc8ff8a, { emissive: 0x9dff4d, emissiveIntensity: 1.4 });
+  const crack = box(0.06, 0.95, 0.5, crackM); model.add(crack);
+  crack.position.set(0.34, 0.78, 0.82); crack.rotation.y = -0.5; crack.rotation.x = 0.45;
+  // poteau + disque trèfle (jaune/noir)
+  const postM = mat(0x747a70, { roughness: 1 });
+  const post = cyl(0.06, 0.08, 1.5, postM, 6); post.position.set(-2.15, 0.75, 0.95); model.add(post);
+  const discM = mat(0xd8cf5a, { emissive: 0xb8a62a, emissiveIntensity: 0.7 });
+  const disc = cyl(0.34, 0.34, 0.05, discM, 20); disc.position.y = 1.5; disc.rotation.x = Math.PI / 2;
+  for (let i = 0; i < 3; i++) {
+    const wedgeM = mat(0x1c1a10);
+    const wedgeGeo = new THREE.CircleGeometry(0.26, 12, i * ((Math.PI * 2) / 3 + 0.5), (Math.PI * 2) / 3 - 0.5);
+    const wedge = new THREE.Mesh(wedgeGeo, wedgeM); wedge.position.z = 0.03; disc.add(wedge);
+  }
+  post.add(disc);
+  // halo au sol
+  const glowMat = mat(0x8dff5a, { emissive: 0x6dff2e, emissiveIntensity: 1.1 });
+  for (let i = 0; i < 5; i++) {
+    const g = new THREE.Mesh(new THREE.TorusGeometry(rand(0.4, 0.9), 0.025, 6, 24), glowMat);
+    g.rotation.x = -Math.PI / 2; g.position.y = rand(0.38, 1.0); model.add(g);
+  }
+  return model;
+}
+
+function propRBarrel() { // baril de déchets verts, luisant à travers les bandes
+  const model = new THREE.Group(); model.name = 'prop-rbarrel';
+  const body = cyl(0.32, 0.34, 0.95, mat(0x6d8a3c, { roughness: 0.5, metalness: 0.3 }), 14);
+  body.position.y = 0.475; body.castShadow = true; model.add(body);
+  const rimMat = mat(0xaab76e, { metalness: 0.5, roughness: 0.4 });
+  for (const y of [0.18, 0.72]) {
+    const r = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.03, 6, 16), rimMat);
+    r.rotation.x = Math.PI / 2; r.position.y = y; model.add(r);
+  }
+  // bandes de danger + symbole
+  const stripeM = mat(0xd8d050, { emissive: 0xb0a41c, emissiveIntensity: 0.6 });
+  for (let i = 0; i < 3; i++) {
+    const s = box(0.52, 0.05, 0.06, stripeM);
+    s.rotation.y = Math.PI / 2 + i * 1.1; s.position.y = 0.47; model.add(s);
+  }
+  const glowDot = sphere(0.07, mat(0xbfff6a, { emissive: 0x8dff2e, emissiveIntensity: 1.6 }), 10, 8); // capot qui suinte
+  glowDot.position.y = 0.98; model.add(glowDot);
+  model.rotation.z = rand(-0.12, 0.12);
+  return model;
+}
+
+function propHStripes() { // plot de sol jaune/noir rayé (marquage danger)
+  const model = new THREE.Group(); model.name = 'prop-hstripes';
+  const baseS = box(1.6, 0.05, 1.2, mat(0x3a4034, { roughness: 1 })); baseS.position.y = 0.03; model.add(baseS);
+  const yellow = mat(0xd8c832, { roughness: 0.7 }); const black = mat(0x1e221a, { roughness: 0.9 });
+  for (let i = 0; i < 5; i++) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 1.1), i % 2 ? black : yellow);
+    stripe.position.set(-0.64 + i * 0.32, 0.05, 0); model.add(stripe);
+  }
+  return model;
+}
+
+function propRadPlant() { // grappes de champignons/branches bioluminescents malades
+  const model = new THREE.Group(); model.name = 'prop-radplant';
+  const stemM = mat(0x4a6b38, { roughness: 0.9 }); const glowM = mat(0xa5ff70, { emissive: 0x7dff3d, emissiveIntensity: 1.8 });
+  const n = 2 + (Math.random() < 0.5 ? 1 : 0);
+  for (let i = 0; i < n; i++) {
+    const h = rand(0.4, 0.9); const a = rand(0, Math.PI * 2);
+    const st = cyl(0.035, 0.06, h, stemM, 6); st.position.set(Math.cos(a) * rand(0, 0.3), h / 2, Math.sin(a) * rand(0, 0.3));
+    st.rotation.x = rand(-0.18, 0.18); st.rotation.z = rand(0.18, -0.18);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(rand(0.09, 0.16), 10, 8), glowM); cap.position.y = h + 0.05; st.add(cap);
+    model.add(st);
+  }
+  return model;
+}
+
+function propBoulder() { // amas de roche noire (ashlands) — plus massif que propRock
+  const model = new THREE.Group(); model.name = 'prop-boulder';
+  const st = mat(0x3f3a34, { roughness: 1 });
+  for (let i = 0; i < 5; i++) {
+    const r = rand(0.25, 0.6); let b;
+    if (_geoCache.has('icos' + r)) b = _geoCache.get('icos' + r);
+    else { b = new THREE.IcosahedronGeometry(r, 0); _geoCache.set('icos' + r, b); }
+    const m = new THREE.Mesh(b, st); m.position.set(rand(-0.6, 0.6), rand(0.15, 0.35), rand(-0.4, 0.4));
+    m.rotation.set(rand(0, 3), rand(0, 3), 0); m.scale.y = rand(0.7, 0.9); m.castShadow = true; model.add(m);
+  }
+  return model;
+}
+
+function propReeds() { // roseaux penchés de la zone marécageuse/spéctrale
+  const model = new THREE.Group(); model.name = 'prop-reeds';
+  const m = mat(0x5a7a6e, { roughness: 0.8 });
+  for (let i = 0; i < 4; i++) {
+    const h = rand(0.7, 1.3); const s = cyl(0.025, 0.05, h, m, 5);
+    s.position.set(rand(-0.25, 0.25), h / 2, rand(-0.2, 0.2));
+    s.rotation.x = (Math.random() - 0.5) * 0.4; s.rotation.z = (Math.random() - 0.5) * 0.5;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.18, 5), m); tip.position.y = h / 2 + 0.09; s.add(tip);
+    model.add(s);
+  }
+  return model;
 }
 
 function propTree() {
@@ -1653,7 +2028,7 @@ export function createProjectileModel(kind = 'bullet') {
   return model;
 }
 
-export function createExplosionModel() {
+export function createExplosionModel(embers = 14) {
   const model = new THREE.Group();
   model.name = 'explosion';
 

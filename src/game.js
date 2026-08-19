@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { CONFIG, terrainHeight } from './config.js';
+import { CONFIG, DIFFICULTIES, MODES, WAVES_BY_MODE, buildInfiniteWave, terrainHeight } from './config.js';
 import { Path } from './path.js';
 import { Zombie, Tower, Projectile } from './entities.js';
 import { createBaseModel, createProp, createVolcano, createRangeCircle, applySkin } from './assets.js';
 import { loadSave, persistSave, resetSave, SHOP } from './save.js';
+import { SFX } from './sound.js';
 
 // ---------------------------------------------------------------------------
 // Game — state machine, wave spawner, economy, master update loop.
@@ -24,6 +25,9 @@ export class Game {
     this.state = 'MENU';
     this._screenMode = 'menu'; // menu | pause | gameover|win — drives onScreenButton
     this.saveData = loadSave(); // coins, owned towers/skins (localStorage)
+    if (!this.saveData.settings) this.saveData.settings = { ...CONFIG.settingsDefault };
+    this.sfx = new SFX();
+    this.applySettings(true);
     this.speed = 1;
     this.money = CONFIG.startMoney;
     this.baseHP = CONFIG.baseHP;
@@ -60,6 +64,7 @@ export class Game {
     // Per-prop footprint radius (for spacing / build-blocking).
     const RADIUS = { tree: 1.2, rock: 0.8, bush: 0.6, tombstone: 0.6, lamp: 0.5, fence: 1.6, sign: 0.6, grass: 0.3, flower: 0.3,
       stump: 0.5, log: 0.9, crate: 0.5, cart: 1.0, well: 0.9, hedge: 0.8, mushroom: 0.4, snowpile: 0.8,
+      skull: 0.4, deadtree: 1.0, barrel: 0.5,
       rockspire: 1.0, lavapool: 1.0, cinder: 0.5 };
     // Min distance from the path center, per prop kind (small decor can sit closer).
     const PATH_CLEAR = { grass: 1.4, flower: 1.4, mushroom: 1.6, grass2: 1.4 };
@@ -67,7 +72,9 @@ export class Game {
     this.propMeshes = [];
     this.propBlocks = [];
     const b = CONFIG.mapBounds;
-    const span = Math.min(CONFIG.groundSize - 4, (b.maxX - b.minX) - 4);
+    const gs = CONFIG.groundSize;
+    const gsize = typeof gs === 'number' ? gs : Math.max(gs.x, gs.z);
+    const span = Math.min(gsize - 4, (b.maxX - b.minX) - 4);
     const half = span / 2;
     const end = this.basePos || new THREE.Vector3(26, 0, 2);
     const placed = []; // { x, z, r }
@@ -157,12 +164,27 @@ export class Game {
     this.ui.showInventory(this.saveData);
   }
 
+  // Écran dédié « Difficulté » (cartes illustrées + récompenses + verrouillages)
+  openModes() {
+    if (this.state === 'PLAYING') { this.state = 'PAUSED'; this.lastFrame = performance.now(); }
+    this._screenMode = 'modes';
+    this.ui.showModes(this.saveData);
+  }
+
+  // Écran dédié « Paramètres » (particules / cadavres / son / reset)
+  openSettings() {
+    if (this.state === 'PLAYING') { this.state = 'PAUSED'; this.lastFrame = performance.now(); }
+    this._screenMode = 'settings';
+    this.ui.showSettings(this.saveData);
+  }
+
   // Shop purchases -------------------------------------------------------
   buyTower(id) {
     const item = SHOP.towers.find((t) => t.id === id);
     if (!item || this.saveData.ownedTowers.includes(id) || this.saveData.coins < item.price) return false;
     this.saveData.coins -= item.price;
     this.saveData.ownedTowers.push(id);
+    if (this.sfx) this.sfx.buy();
     persistSave(this.saveData);
     // newly unlocked tower appears on the build panel immediately
     if (this.ui && typeof this.ui._buildCards === 'function') { this.ui._buildCards(); this.ui.refreshCards(); }
@@ -197,6 +219,17 @@ export class Game {
   }
 
   // ⟳ Réinitialise toute la progression (pièces, tours, niveaux, skins, vitesses, mode auto)
+  // Applique les réglages du menu Paramètres : qualité de particules, nombre de
+  // cadavres visibles simultanément, son on/off.
+  applySettings(save = false) {
+    const s = (this.saveData && this.saveData.settings) || CONFIG.settingsDefault;
+    if (!this.saveData.settings) { this.saveData.settings = { ...CONFIG.settingsDefault }; }
+    this.corpsCap = Math.max(0, Math.min(200, s.corpses | 0));
+    if (this.vfx && typeof this.vfx.setQuality === 'function') this.vfx.setQuality(s.particles || 'moyen');
+    if (this.sfx) this.sfx.setEnabled(!!s.sound);
+    if (save) persistSave(this.saveData);
+  }
+
   resetProgress() {
     this.saveData = resetSave();
     persistSave(this.saveData);
@@ -249,16 +282,29 @@ export class Game {
     }
   }
 
-  onScreenButton() {
-    // The big button only exists on pause / gameover / win screens now
+  onScreenButton(action) { // action : undefined|'restart'|'menu'
+    // The big button(s) only exist on pause / gameover / win screens now
     // (the menu has its own buttons), so state is a reliable discriminator.
-    if (this.state === 'PAUSED') {
+    if (action === 'menu') {
+      this._bankCoins(); persistSave(this.saveData); // pièces conservées au menu
+      this.openMenu();
+      return;
+    }
+    if (this.state === 'PAUSED' && action !== 'restart') {
       this.state = 'PLAYING';
       this.ui.hideScreen();
       this.lastFrame = performance.now();
-    } else if (this.state === 'GAMEOVER' || this.state === 'WIN') {
+    } else if (this.state === 'GAMEOVER' || this.state === 'WIN' || action === 'restart') {
       this.restart();
     }
+  }
+
+  // ✕ Quitter : quitte la partie EN COURS sans tout effacer — les pièces
+  // gagnées pendant le run sont banked puis on retourne au menu principal.
+  quitToMenu() {
+    if (this.state !== 'MENU') this._bankCoins();
+    persistSave(this.saveData);
+    this.openMenu();
   }
 
   startNewGame() {
@@ -281,7 +327,43 @@ export class Game {
     this.ui.refreshHUD();
   }
 
+  // Le plus haut mode fini débloqué (chaîne : Débutant → Moyen → Avancé → Impossible)
+  _highestUnlockedMode() {
+    let best = DIFFICULTIES.debutant;
+    for (const k of MODES) {
+      const d = DIFFICULTIES[k];
+      if (!d.unlock || (this.saveData && this.saveData.completed && this.saveData.completed[d.unlock])) best = d;
+    }
+    return best;
+  }
+
+  // Résout le mode de difficulté courant (menu principal → saveData.lastMode)
+  activeMode() {
+    const wanted = (this.saveData && this.saveData.lastMode) || 'debutant';
+    let def = DIFFICULTIES[wanted] || DIFFICULTIES.debutant;
+    // verrouillage progressif : on ne peut jouer un mode qu'après avoir gagné le précédent
+    if (def.unlock && !(this.saveData && this.saveData.completed && this.saveData.completed[def.unlock])) {
+      def = this._highestUnlockedMode();
+    }
+    return def;
+  }
+
   _resetState() {
+    // -- mode de difficulté : carte + vagues + économie spécifiques --------
+    let wanted = (this.saveData && this.saveData.lastMode) || 'debutant';
+    if (!(DIFFICULTIES[wanted] && DIFFICULTIES[wanted].key === wanted)) wanted = 'debutant';
+    const def = this.activeMode(); // gère aussi le verrouillage progressif
+    if (def.key !== wanted) {
+      wanted = def.key;
+      if (this.saveData) this.saveData.lastMode = def.key; // le mode était verrouillé → on retombe sur le plus haut mode débloqué
+    }
+    this.modeKey = def.key;
+    this.modeDef = def;
+    const list = WAVES_BY_MODE[def.key];
+    this.waveList = Array.isArray(list) ? list : [];
+    this.infiniteMode = (this.saveData && this.saveData.lastMode === 'infini') || (!list.length);
+    if (this.infiniteMode) { this.waveList = []; }
+
     // clear entities
     for (const z of this.zombies) this.scene.remove(z.model);
     for (const t of this.towers) this.scene.remove(t.model);
@@ -296,8 +378,8 @@ export class Game {
     this.kills = 0;
     this.earned = 0;
     this.shakeAmp = 0;
-    this.money = CONFIG.startMoney;
-    this.baseHP = CONFIG.baseHP;
+    this.money = (this.modeDef && this.modeDef.startMoney) || CONFIG.startMoney;
+    this.baseHP = (this.modeDef && this.modeDef.baseHP) || CONFIG.baseHP; // PV de base par mode
     this.currentWave = null;
     this.waveIndex = 0;
     this._themeIdx = -1;
@@ -305,7 +387,14 @@ export class Game {
     this.ui.refreshCards();
     this.vfx.dispose();
     // reset the visual map to the first theme (props + ground + sky)
-    this.applyTheme(1);
+    // Carte du mode : le run reste sur SA map (débutant=dirt, moyen=neige,
+    // avancé=volcan, impossible=radioactive) ; l'Infini tourne en boucle.
+    const fixed = this.modeDef && !this.infiniteMode;
+    if (fixed && typeof this.setTheme === 'function') {
+      try { this.setTheme(this.modeDef.themeIdx ?? 0); } catch (_) { /* noop */ }
+    } else {
+      this.applyTheme(1);
+    }
     if (this.input) this.input.hideGhost();
   }
 
@@ -370,6 +459,7 @@ export class Game {
     const t = new Tower(type, x, z, this);
     if (this.saveData.towerSkin && this.saveData.towerSkin !== 'classic') applySkin(t.model, this.saveData.towerSkin);
     this.towers.push(t);
+    if (this.sfx) this.sfx.place();
     const [gx, gz] = this.path.snap(x, z);
     this.occupied.add(gx + '|' + gz);
     this.ui.refreshHUD();
@@ -433,6 +523,7 @@ export class Game {
     if (!t) return false;
     const ok = t.upgrade(this);
     if (ok) {
+      if (this.sfx) this.sfx.upgrade();
       this.ui.refreshTowerPanel();
       this.showTowerRange(t); // range may have grown
     }
@@ -480,10 +571,16 @@ export class Game {
     this._beginWave();
   }
 
+  // Nombre de vagues du mode courant (0 en Infini).
+  totalWavesNow() { return (!this.infiniteMode && this.modeDef) ? (this.waveList.length || 1) : 0; }
+
   _beginWave() {
-    if (this.waveIndex >= CONFIG.totalWaves) return;
-    this.currentWave = CONFIG.waves[this.waveIndex];
+    if (!this.infiniteMode && this.waveIndex >= this.totalWavesNow()) return;
+    const n = this.waveIndex + 1; // numéro de la vague à jouer (1-indexed)
+    this.currentWave = this.infiniteMode ? buildInfiniteWave(n) : this.waveList[this.waveIndex];
+    if (!this.currentWave) return;
     this.waveIndex++;
+    if (this.sfx) { this.sfx.unlock(); this.sfx.waveStart(); }
     this.autoWaveReady = false;
     this._buildSpawner(this.currentWave);
     this.applyTheme(this.currentWave.w);
@@ -493,8 +590,8 @@ export class Game {
 
   _buildSpawner(wave) {
     const entries = [];
-    for (const [type, skin, count] of wave.list) {
-      for (let i = 0; i < count; i++) entries.push({ type, skin });
+    for (const [type, skin, count, flags] of wave.list) {
+      for (let i = 0; i < count; i++) entries.push({ type, skin, ...(flags || {}) });
     }
     // interleave: shuffle but keep bosses last
     const normal = entries.filter((e) => e.type !== 'boss');
@@ -512,13 +609,17 @@ export class Game {
     }
   }
 
-  _spawnZombie(type, skin) {
-    if (type === 'boss') {
-      const bossKey = skin;
+  _spawnZombie(e = { type: 'walker', skin: 'default' }) {
+    if (e.type === 'boss') {
+      const bossKey = e.skin;
       const z = new Zombie({ isBoss: true, bossKey, hpScale: this.currentWave.hp, spScale: this.currentWave.sp });
+      // Mini-boss : ne oneshotte PAS la maison — il inflige 1/2 des PV de base
+      if (e.mini) z.baseDamage = Math.max(5, Math.round((this.modeDef ? this.modeDef.baseHP : 40) / 2));
+      z._game = this;
       this._addZombie(z);
     } else {
-      const z = new Zombie({ type, skin, hpScale: this.currentWave.hp, spScale: this.currentWave.sp });
+      const z = new Zombie({ type: e.type, skin: e.skin, hpScale: this.currentWave.hp, spScale: this.currentWave.sp });
+      z._game = this;
       this._addZombie(z);
     }
   }
@@ -534,6 +635,7 @@ export class Game {
   spawnMinion(pos) {
     // find progress nearest to this position (approx: use the point just before end)
     const z = new Zombie({ type: 'walker', skin: 'default', hpScale: this.currentWave ? this.currentWave.hp : 1, spScale: 1 });
+    z._game = this;
     z.progress = Math.max(0, 0.9);
     this._addZombie(z);
   }
@@ -544,7 +646,7 @@ export class Game {
     const s = this.spawner;
     while (s.queue.length && now >= (s.nextAt || 0)) {
       const e = s.queue.shift();
-      this._spawnZombie(e.type, e.skin);
+      this._spawnZombie(e);
       s.remaining = s.queue.length;
       if (s.queue.length) s.nextAt = now + s.interval * 1000;
       this.ui.refreshHUD();
@@ -557,13 +659,14 @@ export class Game {
     const dt = Math.min(0.05, Math.max(0, rawDt)) * this.speed;
     this.elapsed += dt;
 
-    // Cap visible corpses at 20 to avoid a lag spike from many death
-    // animations at once. Oldest corpses are finished instantly.
+    // Cap visible corpses (Paramètres, défaut 20) pour éviter un à-coup de
+    // performance : les plus vieux cadavres terminent leur mort instantanément.
     {
+      const cap = Math.max(0, this.corpsCap | 0); // Paramètres → cadavres visibles
       let dying = 0;
       for (const z of this.zombies) if (z.dead && !z._deathDone) dying++;
-      if (dying > 20) {
-        let excess = dying - 20;
+      if (dying > cap) {
+        let excess = dying - cap;
         for (const z of this.zombies) {
           if (excess <= 0) break;
           if (z.dead && !z._deathDone) { z._deathDone = true; excess--; }
@@ -650,7 +753,15 @@ export class Game {
 
   onZombieReachedBase(z) {
     this.baseHP -= z.baseDamage;
+    // 🛡️ Un BOSS qui atteint la base = mort immédiate : il enfonce toute la
+    // structure d'un seul coup (game over sur le champ, même à 20/20 PV).
+    if (z.isBoss) {
+      this.baseHP = 0;
+      this.shake(0.9);
+      if (this.ui && this.ui.showBanner) this.ui.showBanner('⚠️ LE BOSS A ENFONCÉ LA BASE');
+    }
     this.vfx.baseHit();
+    if (this.sfx) this.sfx.baseHit();
     this.shake(0.4);
     this.ui.flashBase();
     // small death effect at base
@@ -679,9 +790,14 @@ export class Game {
   }
 
   // -- damage / death ---------------------------------------------------
+  soundBaseHit() {
+    if (this.sfx && this.saveData.settings && this.saveData.settings.sound !== false) this.sfx.baseHit();
+  }
+
   damageBase(amount) {
     this.baseHP -= amount;
     this.vfx.baseHit();
+    if (this.sfx) this.sfx.baseHit();
     this.ui.flashBase();
   }
 
@@ -692,25 +808,44 @@ export class Game {
   // -- win / lose -------------------------------------------------------
   _gameOver() {
     if (this.state === 'GAMEOVER') return;
+    if (this.sfx) this.sfx.lose();
     this.state = 'GAMEOVER';
     this._bankCoins();
     this.ui.showScreen({
       title: 'Base Destroyed',
       sub: 'The undead broke through on wave ' + (this.currentWave ? this.currentWave.w : this.waveIndex) + '.',
       body: this._statsBody(),
-      btn: 'Restart',
+      buttons: [
+        { key: 'restart', label: 'Rejouer', primary: true },
+        { key: 'menu',    label: 'Menu' },
+      ],
     });
   }
 
   _win() {
     if (this.state === 'WIN') return;
     this.state = 'WIN';
+    // Débloque progressif : gagner un mode débloque le suivant
+    const mk = this.modeKey && this.modeDef ? this.modeDef.key : null;
+    if (mk && this.saveData) {
+      this.saveData.completed = Object.assign({}, this.saveData.completed, { [mk]: true });
+      persistSave(this.saveData);
+    }
     this._bankCoins();
+    // Bonus de mode : plus la difficulté est élevée, plus la victoire rapporte
+    const mRew = (this.modeDef && this.modeDef.reward) || 0;
+    if (mRew > 0 && this.saveData) { this.saveData.coins += mRew; persistSave(this.saveData); }
+    this._lastModeReward = mRew;
     this.ui.showScreen({
       title: 'Victory!',
-      sub: 'All 15 waves repelled. The base stands.',
+      sub: mRew > 0
+        ? `Mode ${(this.modeDef || {}).name || ''} terminé — bonus de difficulté : +${mRew.toLocaleString('fr-FR')} 🪙` + (this._lastCoinGain ? ' (avec ' + this._lastCoinGain + ' 🪙 gagnés en partie)' : '')
+        : 'All waves repelled. The base stands.',
       body: this._statsBody(),
-      btn: 'Play Again',
+      buttons: [
+        { key: 'restart', label: 'Rejouer', primary: true },
+        { key: 'menu',    label: 'Menu' },
+      ],
     });
   }
 
@@ -733,7 +868,7 @@ export class Game {
   _checkWaveComplete(now) {
     if (this.state !== 'PLAYING') return;
     // all waves done and nothing alive -> win
-    if (this.waveIndex >= CONFIG.totalWaves) {
+    if (!this.infiniteMode && this.waveIndex >= this.totalWavesNow()) {
       const anyAlive = this.zombies.some((z) => z.alive) || (this.spawner && this.spawner.queue.length > 0);
       if (!anyAlive) { this._win(); return; }
     }
@@ -741,7 +876,8 @@ export class Game {
     if (this.currentWave && this.spawner === null) {
       const anyAlive = this.zombies.some((z) => z.alive);
       if (!anyAlive) {
-        if (this.waveIndex >= CONFIG.totalWaves) this._win();
+        if (!this.infiniteMode && this.waveIndex >= this.totalWavesNow()) { if (this.sfx) this.sfx.win(); this._win(); }
+        else if (this.infiniteMode) { /* la partie continue indéfiniment */ 0; }
         else if (!this.autoWaveReady) {
           this.autoWaveReady = true;
           this.autoWaveT0 = now;
@@ -759,11 +895,20 @@ export class Game {
   }
 
   applyTheme(wave) {
-    // Map (visual theme) rotates every 5 waves and KEEPS cycling forever
-    // (suburb -> winter -> volcanic -> suburb -> ...), so the map never
-    // gets stuck on the last theme.
+    // Modes finis (Débutant/Moyen/Avancé/Impossible) : le run reste sur SA
+    // carte dédiée. En mode Infini la map tourne en boucle toutes les 5 vagues.
+    if (this.modeDef && !this.infiniteMode) {
+      const idx = this.modeDef.themeIdx ?? 0;
+      return this._applyThemeIdx ? this._applyThemeIdx(idx) : null;
+    }
+    // (Infini) : the visual theme rotates every 5 waves and KEEPS cycling forever
     const idx = Math.floor((wave - 1) / 5) % CONFIG.themes.length;
-    if (idx === this._themeIdx) return;
+    if (idx === this._themeIdx && !this._forceTheme) return;
+    this._forceTheme = false;
+    return this._applyThemeIdx(idx);
+  }
+
+  _applyThemeIdx(idx) {
     const th = CONFIG.themes[idx];
     if (!th) return;
     this._themeIdx = idx;
@@ -791,10 +936,10 @@ export class Game {
 
   // Test / manual theme switching (UI buttons) — force a specific theme index.
   setTheme(idx) {
-    const wave = (Math.max(0, idx) * 5) + 1; // theme 0 -> wave 1, 1 -> wave 6, 2 -> wave 11
+    if (!CONFIG.themes[idx]) return 'map';
     this._themeIdx = -1; // force re-apply even if same
-    this.applyTheme(wave);
-    return CONFIG.themes[idx] ? CONFIG.themes[idx].name : 'map';
+    this._applyThemeIdx(Math.max(0, idx) | 0);
+    return CONFIG.themes[idx].name;
   }
 
   // Cycle to the next map theme; returns the new theme's name for the HUD label.

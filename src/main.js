@@ -4,7 +4,7 @@ import { createRenderer, createCamera, createLights, createGround, createPathRib
 import { createBaseModel, applySkin } from './assets.js';
 import { loadSave } from './save.js';
 import { Path } from './path.js';
-import { CONFIG, terrainHeight } from './config.js';
+import { CONFIG, terrainHeight, DIFFICULTIES } from './config.js';
 import { Game } from './game.js';
 import { UI } from './ui.js';
 import { VFX } from './vfx.js';
@@ -73,6 +73,7 @@ onResize(renderer, camera);
 game.init();
 window.__game = game; // debug/inspection handle
 window.__CONFIG = CONFIG;
+window.__DIFFICULTIES = DIFFICULTIES; // utilisé par le menu (boutons de difficulté + verrouillages)
 window.__terrainHeight = terrainHeight; // debug/inspection handle
 
 // ---------------------------------------------------------------------------

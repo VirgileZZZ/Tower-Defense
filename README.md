@@ -63,17 +63,26 @@ Le **placement fantôme** suit la souris, passe au-dessus du terrain 3D et se fi
 
 ---
 
-## 🗺️ Les cinq thèmes (cycles automatiques)
+## 🗺️ Les six thèmes (cycles automatiques)
 
 | Theme | Carte / ambiance |
 |---|---|
 | **suburb** | Route asphaltée, pelouses et maisons de banlieue, ciel clair |
 | **winter** | Sol givré bleu-blanc, neige en permanence, sapins blancs |
 | **volcanic** | Terres brûlées or/rouge, volcan actif avec particules, astrolabe de lumière |
-| **ashlands** | Post-apo : brume grise, herbes mortes rousses, débris et gravats |
-| **haunted** | Basse saturation bleue-verte, brume spectrale, lucioles/essences vertes |
+| **ashlands** | Post-apo : brume grise, herbes mortes rousses, débris et gravats (rochers massifs) |
+| **haunted** | Basse saturation bleue-verte, brume spectrale, champignons bioluminescents + roseaux |
+| **radioactive** | 🆕 Ciel malade vert-noir, dôme de confinement fêlé avec halo pulsant, barils de déchets rayonnants, plots jaune/noir, flore mutante bioluminescente, rochers sombres — zombies verts irisés (« radiant ») +8 % PV, 5 % armure |
 
-La vague 1–5 = suburb, 6–10 = winter, 11–15 = volcanic… et le cycle recommence (modulo sur `(wave−1)/5`), donc les thèmes tournent pendant toute la partie de 100 vagues. Le bouton « changer de map » d'antan a été retiré du HUD — le jeu gère tout seul.
+La vague 1–5 = suburb, 6–10 = winter… le cycle recommence (modulo sur `(wave−1)/5` avec 6 thèmes), donc les thèmes tournent pendant toute la partie de 100 vagues.
+
+**⚖️ Équilibrage (v2)** : courbe d'PV zombie adoucie (+11 %/vague au lieu de +13 %, terme quadratique ÷2) et croissance des tours relevée à ×1,36/niveau — les tours niveau 5 restent compétitives jusqu'en fin de partie sans être écrasées par les vagues tardives.
+
+**⚙️ Paramètres (menu principal)** : boutons « ⚙ Paramètres » → panneau avec **Particules** (Faible/Moyen/Max — densité des explosions), **Cadavres visibles simultanés** (5/10/20/40/80), **Son on/off**, et le reset de progression. Le gros bouton « Réinitialiser la progression » d'antan a été remplacé par ce panneau.
+
+**🔊 Audio** : tous les sons sont synthétisés en WebAudio (aucun asset) — tirs distincts par tour, impacts, morts, placements, achats, alarme de vague, coup à la base, fanfare de victoire et glissando de défaite. Throttillés pour rester légers.
+
+**📈 Zones enrichies** : de nouveaux props 3D (réacteur, barils radioactifs, marquage jaune/noir, flore mutante, rochers massifs, roseaux) + 6e zone radioactive complète.
 
 ---
 
@@ -149,9 +158,114 @@ Les scripts `_cp*.cjs` (menu, placement, upgrades, boutique, skins, HUD…) vér
 
 ---
 
+## 🔁 Derniers ajouts (journal)
+
+**↩️ Bouton « ← Retour au menu » unifié**
+
+- Sur les 4 écrans du menu (Difficulté, Boutique, Inventaire, Paramètres), le bouton retour n'avait ni la même position ni la même taille : en haut et tout-en-largeur dans l'Inventaire (victime de la règle `#screen.wide .inv-wrap > * { width:100% }`), en bas et centré dans Paramètres et Difficulté, petit en haut à gauche dans la Boutique. Désormais tous identiques : **pilule compacte (146 px) en haut à gauche du contenu**, avec un léger survol, sur les 4 écrans (`src/ui.js` + `src/style.css`).
+
+**🐛 Corrections de bugs (boutons morts)**
+
+- **Inventaire → détail tour → « Lv 2 » → bouton 🎨 Skins mort** : le changement de niveau re-génère tout le panneau (`innerHTML`), or les listeners du bouton Skins (et des chips de skins) n’étaient liés qu’au premier rendu → orphelins après un clic niveau. Désormais re-liés à **chaque** rendu (`renderTowerDetail` dans `src/ui.js`), et le panneau de skins reste ouvert/fermé d’un niveau à l’autre. La branche tour ne se lie plus qu’une seule fois (pas de double-événement).
+- **Bouton « Resume » fantôme après « ✕ Quitter »** : l’écran de pause posait son bouton « Resume » dans `#screen-btns`, mais `showMenu`/`showShop`/`showInventory`… ne viraient jamais ce conteneur → un vieux bouton « Resume » restait affiché sous le menu, et le cliquer ne faisait rien (l’état est `MENU`, pas `PAUSED`). `_setScreenMode` vide désormais les boutons `screen-action` de `#screen-btns` à chaque écran de menu (`src/ui.js`).
+
+**🌅 Cartes plus denses + skins de maison à part entière + icône navigateur**
+
+- **Les 6 cartes sont plus riches** : chaque thème reçoit des dizaines de props supplémentaires (plus de rochers, buissons, herbe, fleurs, décombres) et 3 **nouveaux décors 3D** (`skull` crâne de zombie, `deadtree` arbre mort noué, `barrel` baril rouillé à bandes de fer) dans `src/assets.js`, déclarés dans les listes `props:` de `src/config.js`. Les rayons de collision / anti-collision du scatter sont dans `scatterProps` (`src/game.js`).
+- **Les 3 skins de maison ne sont plus que du changement de couleur** : `buildBaseSkinDecor` (dans `src/assets.js`) construit de **vraies structures 3D** posées autour de la demeure (coordonnées absolues, 1 unité = 1 m) :
+  - *Maison Enchantée* : cercle de 8 menhirs runiques, sigile lumineux gravé au sol, cristal arcanique sur le faïtage, runes en lévitation, 2 piliers de porte runiques.
+  - *Château de Cristal* : plateforme de glace sous la maison, muraille de 9 pics de cristal, gros cristal royal sur le toit, cristaux épars.
+  - *Manoir Hanté* : cercle de tombeaux penchés, arbre mort noué, 4 spectres flottants, brume verte basse, grande lanterne courbée.
+  - Le dispatch se fait dans `buildSkinDecor(id, scale, big)` (le flag `big` = modèle de maison >2 m de haut).
+- **Icône navigateur** : `public/favicon.svg` (tête de zombie sur le toit de la base), branchée dans `<head>` d’`index.html` via `<link rel="icon">` + `apple-touch-icon`. Copiée automatiquement dans `dist/` au build.
+
+**🚨 Règle d'or du boss à la base** : un boss qui parvient jusqu'à votre maison **vous élimine instantanément**, quel que soit le PV restant (même 20/20). Avant, il ne retirait que 8–16 PV selon sa taille — désormais son passage en force est définitif.
+
+**⚖️ Dégâts infligés à la base par ennemi** (base = 20 PV de départ) :
+
+| Ennemi | Dégâts/leak |
+|---|---|
+| Walker / Fast (zombies ordinaires, toute zone) | **2** |
+| Tank / zombie sale (ashlands), boss vagues 10–30 (Brute, Stalker, Frost King, Pyro Lord, Abomination, Runner, Regenerator) | **5 → 8–12** selon le boss (Pyro Lord : 10, Abomination/Runner/Regenerator : 12) |
+| Boss lourds — Stone Golem, Wraith | **14** |
+| The Titan (vague 90, 3200 PV) | **16** |
+| **Boss à la base (tous)** | **mort instantanée de la partie** 🚨 |
+
+Soit : ~5–8 zombies ordinaires qui se faufilent = défaite ; un seul boss = toujours game over.
+
+**🔊 Sons ajoutés (synthèse WebAudio, zéro asset)** :
+- Tirs distincts par tour : Gunner *tic-ping*, Sniper *boum* grave, Frost *fzzz glacé*, Mortier *choc sourd*, Flame *rugissement de feu*
+- Impacts des projectiles + mort zombie (pop descendante ; boss = double couche grave)
+- Placement de tour (clac + ping), vente, achat boutique (montée tri-tones), upgrade (escalade)
+- Alarme two-tone au lancement d'une vague, gong grave + choc quand la base encaisse
+- Fanfare de victoire (4 notes montantes) et glissando de défaite (320 Hz → 60 Hz)
+- Le tout throttle (<1 tir son/55 ms) pour rester discret et léger — coupable dans ⚙ Paramètres → Son Off.
+
+**⚖️ Équilibrage (v2)** : courbe d'PV zombie adoucie (+11 %/vague au lieu de +13 %, terme quadratique ÷2 : vague 50 ≈ 11,2 au lieu de ~15,8) et croissance des tours relevée à **×1,36/niveau** — les tours niveau 5 restent compétitives en fin de partie.
+
+**⚙️ Paramètres (menu)** : Particules Faible/Moyen/Max · Cadavres visibles 5–80 · Son on/off · Reset progression. Le gros bouton « Réinitialiser » est devenu un petit **⚙ Paramètres** avec ce panneau.
+
+**🗺️ 6e zone radioactive** (dôme, barils, plots jaune/noir, flore mutante) + props enrichis sur ashlands/haunted — cycles automatiques tous les 5 vagues.
+
+---
+
 ## 📌 Notes / décisions de design
 
 - **Pas de modèles externes** : tout est procedural Three.js (primities), donc zéro asset à gérer.
 - La difficulté monte en fin de partie : scaling quadratique des PV + boss capables d'attaquer vos tours, d'invoquer des minions et de vous lancer des projectiles.
 - Le bouton « Map » du HUD a été retiré : le thème change automatiquement (voir la table plus haut).
 - Les upgrades sont équilibrés en **courbe multiplicative douce** plutôt qu'en bonus additifs disproportionnés.
+
+---
+
+## Modes de difficulté (style TDS) — nouvelle session
+
+La liste unique de 100 vagues est remplacée par **4 modes + Infini**, chacun sur SA
+propre carte, avec mini-boss toutes les 5 vagues et un boss final distinct :
+
+| Mode | Vagues | Carte | PV base | Pièces départ | Boss final | Débloqué si… |
+|---|---|---|---|---|---|---|
+| **Débutant** | 25 | Cendres / dirt 🪨 | 40 | 350 💰 | `brute` (stun) | par défaut |
+| **Moyen** | 30 | Neige ❄️ | 40 | 280 💰 | `abomination` (régénération) | gagné Débutant |
+| **Avancé** | 35 | Volcan 🌋 | 40 | 220 💰 | `wraith` (freeze + téléport) | gagné Moyen |
+| **Impossible** | 40 | Zone radioactive ☢️ | 35 | 180 💰 | `titan` (pétrification, golem, boss) | gagné Avancé |
+| **∞ Infini** | — | toutes les cartes en rotation | 40 | 200 💰 | boss cyclés, vagues générées à la volée | toujours |
+
+- **Mini-boss** (vague 5, 10, 15…) : dégâts = **½ des PV de base du mode** — ils
+  blessent fort sans tuer d'un coup ; les mini-boss se renforcent avec l'index de vague.
+- **Boss final** : dégâts = PV base complets (1 touché = game over sur ce point).
+- Verrouillage progressif persistant (`saveData.completed`), boutons désactivés + tooltip.
+
+### Carte agrandie & path zigzag
+Terrain maintenant **68 × 52** (contre 40×30) : plus de place constructive, bordures
+naturelles visibles au-delà des cases (bushes/rocks/réacteurs…), path en S à **12 points
+d'inflexion**. Borne buildable = `CONFIG.mapBounds`.
+
+### 3 nouvelles tours (inspirées TDS) → **9 au total**
+
+| Tour | Prix | Cooldown | Portée | Comportement | Niveau max |
+|---|---|---|---|---|---|
+| ⚡ **Shock** (`shock`) | 1500 | 0.8 s | 3.4 | Arc électrique instantané, enchaîne jusqu'à 2 cibles à -35 % | 6 |
+| 🔫 **Gatling** (`gatling`) | 1200 | 0.25 s (volley de 3) | 4.6 | Salves rapides de balles, DPS élevé contre les nuées de walkers | 7 |
+| 🌾 **Farm** (`farm`) | 900 | toutes les 5 s | — | Génère des pièces périodiques (+ bonus par niveau) ; pas d'attaque | 6 |
+
+Toutes intègrent la courbe standard (dégâts ×1.36/niveau ou revenus croissants),
+les skins du catalogue, la boutique de niveaux et le panel d'infos du HUD.
+
+### Divers
+- Écran « Jouer » affiche le nom du mode sélectionné ; HUD `Vague x / N` selon le mode
+  (`∞` en Infini) ; barre PV de base normalisée au max du mode.
+- Gagner un mode l'enregistre dans la sauvegarde et débloque le suivant (persistance).
+
+### Écrans dédiés & récompenses de difficulté (refonte du menu)
+Le menu principal ne contient plus que 5 boutons propres :
+**Jouer** (dernier mode sélectionné), **Difficulté**, **Boutique**, **Inventaire**, **Paramètres**.
+
+- **Difficulté** → écran dédié : 5 cartes illustrées (SVG dessinés, aucun fichier
+  externe : ciel + sol + chemin + maison + zombie + emblème propre à chaque carte),
+  nom, nombre de vagues, récompense, état verrouillé/débloqué et bouton *Jouer*.
+- **Paramètres** → écran dédié (particules, cadavres, son, réinitialisation) avec
+  bouton retour ; plus de panneau qui s'empilait dans le menu.
+- **Récompense de victoire croissante** : Débutant +500 🪙 · Moyen +1 000 🪙 ·
+  Avancé +2 500 🪙 · Impossible +5 000 🪙 (Infini : survie, sans bonus).
+  Le bonus s'ajoute aux pièces de la partie à l'écran *Victory* et persiste.

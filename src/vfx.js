@@ -13,6 +13,7 @@ export class VFX {
     this.uiRoot = uiRoot;
     this.labelsRoot = labelsRoot;
 
+    this.quality = "moyen";  // particules : low / moyen / max (Paramètres)
     this.effects = [];      // {obj, t0, dur, step}
     this.popups = [];       // {el, pos, t0, life, value, crit}
     this.hpBars = [];       // {z, root, fill}
@@ -39,8 +40,12 @@ export class VFX {
     this.effects.push({ obj: f, t0: performance.now(), dur: 90, step: (o, k) => o.scale.setScalar(1 + k * 1.5) });
   }
 
+  setQuality(q) { this.quality = ['low', 'moyen', 'max'].includes(q) ? q : 'moyen'; }
+
+  _emberCount() { return this.quality === 'low' ? 5 : this.quality === 'max' ? 18 : 10; }
+
   explosion(pos, size = 'normal') {
-    const e = createExplosionModel();
+    const e = createExplosionModel(this._emberCount());
     e.position.copy(pos);
     if (size === 'small') e.scale.setScalar(0.55);
     else if (size === 'fire') e.scale.setScalar(1.1);
@@ -90,6 +95,40 @@ export class VFX {
   }
 
   // -- DOM overlays -----------------------------------------------------
+  // ⚡ Éclair d'Électro : polyline brisée avec décroissance de lueur
+  zap(from, points = []) {
+    if (!points.length) return;
+    const pts = [];
+    let a = from.clone();
+    for (let i = 0; i < points.length; i++) {
+      const b = new THREE.Vector3(points[i].x, Math.max(0.4, points[i].y), points[i].z);
+      const segs = 7;
+      if (i === 0) pts.push(a.clone());
+      for (let s = 1; s <= segs; s++) {
+        const t = s / segs;
+        const p = new THREE.Vector3().lerpVectors(a, b, t);
+        const jit = (s < segs ? 0.4 : 0.12) * (Math.random() - 0.5);
+        p.x += jit; p.z -= jit * 0.7;
+        pts.push(p);
+      }
+      a = b.clone();
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    const matl = new THREE.LineBasicMaterial({ color: 0xa8fff4, transparent: true, opacity: 0.95 });
+    const line = new THREE.Line(geo, matl);
+    this.scene.add(line);
+    this.addEffect(line, 150, (o, k) => { o.material.opacity = Math.max(0, 0.95 * (1 - k)); o.scale.setScalar(1 + k * 0.5); });
+  }
+
+  // 🪙 flottant de la Ferme (+N pièces)
+  coinBurst(pos, gain) {
+    const el = document.createElement('div');
+    el.className = 'dmg-popup coin';
+    el.textContent = '+' + Math.round(gain) + ' 🪙';
+    this.labelsRoot.appendChild(el);
+    this.popups.push({ el, pos: pos.clone(), t0: performance.now(), life: 1100 });
+  }
+
   damagePopup(pos, value, crit) {
     const el = document.createElement('div');
     el.className = 'dmg-popup' + (crit ? ' dmg-crit' : '');
@@ -131,7 +170,7 @@ export class VFX {
   update() {
     const now = performance.now();
 
-    // transient world effects
+    // (transient world effects)
     for (let i = this.effects.length - 1; i >= 0; i--) {
       const e = this.effects[i];
       const k = (now - e.t0) / e.dur;

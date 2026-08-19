@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { SHOP } from './save.js';
-import { createZombieModel, createBossModel, createTowerModel, createBaseModel, applySkin } from './assets.js';
+import { CONFIG, DIFFICULTIES, MODES_ORDER, terrainHeight } from './config.js';
+import { SHOP, persistSave } from './save.js';
+import { createZombieModel, createBossModel, createTowerModel, createBaseModel, createProp, createVolcano, applySkin } from './assets.js';
+import { createGround, createPathRibbon } from './scene.js';
 
 // ---------------------------------------------------------------------------
 // UI — DOM overlay: HUD, build panel, selected-tower panel, screens, banner.
@@ -100,7 +101,15 @@ export class UI {
   }
 
   _wireButtons() {
-    this.screenBtn.addEventListener('click', () => this.game.onScreenButton());
+    // Le bouton unique « classique » est remplacé par #screen-btns (multi-boutons)
+    if (this.screenBtn) this.screenBtn.style.display = 'none';
+
+    // ✕ Quitter la partie en cours (pièces conservées) → menu principal
+    const quitBtn = document.getElementById('btn-quit');
+    if (quitBtn) {
+      quitBtn.addEventListener('click', () => { this.game.quitToMenu(); });
+    }
+
     this.btnSpeed.addEventListener('click', () => {
       this.game.toggleSpeed();
       this.btnSpeed.textContent = this.game.speed + 'x';
@@ -129,11 +138,14 @@ export class UI {
     const g = this.game;
     this.moneyEl.textContent = Math.floor(g.money);
     const cur = g.currentWave;
-    this.waveEl.textContent = (cur ? cur.w : 0) + ' / ' + CONFIG.totalWaves;
+    // compteur de vagues selon le mode (∞ en Infini)
+    const total = g.totalWavesNow ? g.totalWavesNow() : 0;
+    this.waveEl.textContent = (cur ? cur.w : 0) + ' / ' + (g.infiniteMode ? '∞' : (total || CONFIG.totalWaves));
     const alive = g.zombies.filter((z) => z.alive).length;
     const pending = g.spawner ? g.spawner.remaining : 0;
     this.zombiesEl.textContent = alive + (pending ? '+' + pending : '');
-    const pct = Math.max(0, g.baseHP / CONFIG.baseHP);
+    const maxHp = (g.modeDef && g.modeDef.baseHP) || CONFIG.baseHP;
+    const pct = Math.max(0, g.baseHP / maxHp);
     this.basefill.style.width = (pct * 100).toFixed(1) + '%';
     this.basefill.style.background = pct > 0.5
       ? 'linear-gradient(90deg,#4ad06a,#7ae08a)'
@@ -234,13 +246,39 @@ export class UI {
   }
 
   // -- screens ----------------------------------------------------------
-  showScreen({ title, sub, body, btn }) {
+  showScreen({ title, sub, body, btn, buttons }) {
     this._setScreenMode('classic');
     this.screen.classList.remove('hidden');
     this.screenTitle.textContent = title;
     this.screenSub.textContent = sub || '';
     this.screenBody.innerHTML = body || '';
-    if (btn) { this.screenBtn.classList.remove('hidden'); this.screenBtn.textContent = btn; }
+
+    // Boutons du bas de l'écran : un simple libellé (ancien format) ou une
+    // liste de boutons {key,label} — chaque bouton envoie sa clé au jeu.
+    const host = document.getElementById('screen-btns');
+    if (!host) {
+      const anchor = this.screenBtn;
+      const h = document.createElement('div'); h.id = 'screen-btns';
+      anchor.replaceWith(h); h.appendChild(anchor);
+    }
+    const h2 = document.getElementById('screen-btns');
+    while (h2.firstChild) h2.removeChild(h2.firstChild);
+
+    if (Array.isArray(buttons)) {
+      for (const b of buttons) {
+        const el = document.createElement('button');
+        el.className = 'menu-btn screen-action' + (b.primary ? ' primary' : '');
+        el.textContent = b.label;
+        el.addEventListener('click', () => this.game.onScreenButton(b.key));
+        h2.appendChild(el);
+      }
+    } else if (btn) {
+      const el = document.createElement('button');
+      el.className = 'menu-btn screen-action primary';
+      el.textContent = btn;
+      el.addEventListener('click', () => this.game.onScreenButton());
+      h2.appendChild(el);
+    }
   }
 
   _setScreenMode(mode) {
@@ -249,6 +287,13 @@ export class UI {
     this.screen.classList.toggle('wide', wide);
     if (mode === 'menu') { this.screenSub.style.display = 'none'; this.screenTitle.classList.add('title-menu'); }
     else { this.screenSub.style.display = ''; this.screenTitle.classList.remove('title-menu'); }
+    // Les écrans de menu ne gèrent PAS les boutons bas classiques : on vide
+    // #screen-btns, sinon l'ancien bouton (ex. « Resume » de la pause) reste
+    // cliquable en souris morte sur le menu / la boutique / l'inventaire.
+    if (wide) {
+      const host = document.getElementById('screen-btns');
+      if (host) for (const c of [...host.children]) if (c.classList.contains('screen-action')) c.remove();
+    }
   }
 
   // -- Main menu --------------------------------------------------------
@@ -262,25 +307,258 @@ export class UI {
     this.screenBody.innerHTML = `
       <div class="menu-wrap">
         <div class="menu-coins"><span class="hud-coin"></span> ${coins.toLocaleString('fr-FR')} pièces</div>
+
         <nav class="menu-nav">
-          <button id="menu-play" class="menu-btn primary">Jouer</button>
+          <button id="menu-play" class="menu-btn primary">Jouer <span class="menu-play-sub">— choisir la difficulté</span></button>
           <button id="menu-shop" class="menu-btn">Boutique</button>
           <button id="menu-inv"  class="menu-btn">Inventaire</button>
-          <button id="menu-reset" class="menu-btn" title="Efface pièces, tours achetées, niveaux, skins et modes (retour à zéro)">⟳ Réinitialiser la progression</button>
+          <button id="menu-settings" class="menu-btn">⚙ Paramètres</button>
         </nav>
+
         ${hintHtml ? `<div class="ctl-hint menu-hint">${hintHtml}</div>` : ''}
       </div>`;
-    this.screenBody.querySelector('#menu-play').addEventListener('click', () => this.game.startNewGame());
+    // « Jouer » ouvre directement le choix de la difficulté
+    this.screenBody.querySelector('#menu-play').addEventListener('click', () => this.game.openModes());
     this.screenBody.querySelector('#menu-shop').addEventListener('click', () => this.game.openShop());
     this.screenBody.querySelector('#menu-inv').addEventListener('click', () => this.game.openInventory());
-    const resetBtn = this.screenBody.querySelector('#menu-reset');
-    if (resetBtn) {
-      resetBtn.addEventListener('click', () => {
-        if (confirm('Réinitialiser toute la progression ? (pièces, tours, niveaux, skins… tout repart de zéro)')) {
-          this.game.resetProgress();
-        }
-      });
+    this.screenBody.querySelector('#menu-settings').addEventListener('click', () => this.game.openSettings());
+  }
+
+  // -- Écran dédié « Difficulté » : cartes illustrées + récompenses --------
+  showModes() {
+    this._setScreenMode('modes');
+    const g = this.game, d = g.saveData;
+    this.screen.classList.remove('hidden');
+    this.screenBtn.classList.add('hidden');
+    this.screenTitle.textContent = 'Difficulté';
+    this.screenSub.textContent = 'Chaque mode possède sa propre carte, ses mini-boss et son boss final — plus c’est dur, plus la victoire rapporte.';
+    const cards = MODES_ORDER.map((k) => {
+      const def = DIFFICULTIES[k] || null;
+      if (!def) return '';
+      const inf = !!def.infinite;
+      const locked = def.unlock && !(d.completed && d.completed[def.unlock]);
+      const th = CONFIG.themes[def.themeIdx != null ? def.themeIdx : 0];
+      const current = d.lastMode === k;
+      return `<div class="mode-card${locked ? ' locked' : ''}${current ? ' current' : ''}${inf ? ' strip-card' : ''}">
+        <div class="mode-art">${this._modeArt(k)}</div>
+        <div class="mc-body">
+          <b class="mc-name">${def.name}${current ? ' <span class="mc-cur">• en cours</span>' : ''}</b>
+          <span class="mc-desc">${inf ? 'Sans fin — les 5 cartes se suivent, boss après boss' : def.waves + ' vagues · carte « ' + (th ? th.name : '?') + ' »'}</span>
+          <span class="mc-desc">${inf ? 'Survie pure — les pièces viennent des kills' : 'Récompense de victoire : <b>+' + def.reward.toLocaleString('fr-FR') + ' 🪙</b>'}</span>
+          ${locked ? `<span class="mc-locked">🔒 À débloquer — terminez d’abord « ${(DIFFICULTIES[def.unlock] || {}).name || def.unlock} »</span>` : ''}
+        </div>
+        ${locked ? '' : `<button class="shop-buy mc-play" data-mode="${k}">Jouer</button>`}
+      </div>`;
+    }).join('');
+    this.screenBody.innerHTML = `<div class="modes-wrap">
+      <button class="shop-back" data-act="back">← Retour au menu</button>
+      <div class="mode-grid">${cards}</div>
+    </div>`;
+    this.screenBody.querySelectorAll('.mc-play').forEach((b) => b.addEventListener('click', () => {
+      g.saveData.lastMode = b.dataset.mode; persistSave(g.saveData); g.startNewGame();
+    }));
+    this.screenBody.querySelector('[data-act="back"]').addEventListener('click', () => g.openMenu());
+  }
+
+  // -- Écran dédié « Paramètres » ------------------------------------------
+  _settingsRowsHtml() {
+    return `
+      <div class="set-row"><span>Particules</span><div class="set-btns" data-setgrp="particles">${['low', 'moyen', 'max'].map((q) => `<button class="set-btn" data-q="${q}">${q === 'low' ? 'Faible' : q}</button>`).join('')}</div></div>
+      <div class="set-row"><span>Cadavres visibles</span><div class="set-btns" data-setgrp="corpses">${[5, 10, 20, 40, 80].map((n) => `<button class="set-btn" data-n="${n}">${n}</button>`).join('')}</div></div>
+      <div class="set-row"><span>Son</span><div class="set-btns" data-setgrp="sound"><button class="set-btn">On</button><button class="set-btn">Off</button></div></div>
+      <div class="set-row reset-row"><button id="settings-reset" class="set-btn danger">⟳ Réinitialiser la progression (tout effacer)</button></div>`;
+  }
+
+  showSettings() {
+    this._setScreenMode('settings');
+    const g = this.game;
+    this.screen.classList.remove('hidden');
+    this.screenBtn.classList.add('hidden');
+    this.screenTitle.textContent = 'Paramètres';
+    this.screenSub.textContent = 'Qualité de rendu, cadavres visibles, son et progression.';
+    this.screenBody.innerHTML = `<button class="shop-back" data-act="back">← Retour au menu</button>
+      <div class="settings-screen">${this._settingsRowsHtml()}</div>`;
+    this._bindSettings(this.screenBody.querySelector('.settings-screen'));
+    this.screenBody.querySelector('[data-act="back"]').addEventListener('click', () => g.openMenu());
+  }
+
+  _bindSettings(root) {
+    const g = this.game;
+    const st = (g.saveData.settings) || {};
+    root.querySelectorAll('[data-setgrp="particles"] .set-btn').forEach((b) => b.classList.toggle('on', (st.particles || 'moyen') === b.dataset.q));
+    root.querySelectorAll('[data-setgrp="corpses"] .set-btn').forEach((b) => b.classList.toggle('on', +b.dataset.n === +(+st.corpses || 20)));
+    const soundOn = st.sound !== false;
+    const sBtns = root.querySelector('[data-setgrp="sound"]');
+    if (sBtns) { sBtns.children[0].classList.toggle('on', soundOn); sBtns.children[1].classList.toggle('on', !soundOn); }
+    root.querySelectorAll('[data-setgrp="particles"] .set-btn').forEach((b) => b.addEventListener('click', () => {
+      g.saveData.settings = Object.assign({}, g.saveData.settings, { particles: b.dataset.q }); g.applySettings(true);
+      root.querySelector('[data-setgrp="particles"]').querySelectorAll('.set-btn').forEach((x) => x.classList.toggle('on', x === b));
+    }));
+    root.querySelectorAll('[data-setgrp="corpses"] .set-btn').forEach((b) => b.addEventListener('click', () => {
+      g.saveData.settings = Object.assign({}, g.saveData.settings, { corpses: +b.dataset.n }); g.applySettings(true);
+      root.querySelector('[data-setgrp="corpses"]').querySelectorAll('.set-btn').forEach((x) => x.classList.toggle('on', x === b));
+    }));
+    const sndBtns = root.querySelectorAll('[data-setgrp="sound"] .set-btn');
+    sndBtns.forEach((b, i) => b.addEventListener('click', () => {
+      g.saveData.settings = Object.assign({}, g.saveData.settings, { sound: i === 0 }); g.applySettings(true);
+      sndBtns[0].classList.toggle('on', g.saveData.settings.sound !== false);
+      sndBtns[1].classList.toggle('on', g.saveData.settings.sound === false);
+    }));
+    root.querySelector('#settings-reset').addEventListener('click', () => {
+      if (confirm('Réinitialiser toute la progression ?\n(Pièces, tours, niveaux, skins, modes… tout repart de zéro)')) {
+        g.resetProgress();
+      }
+    });
+  }
+
+  // -- Miniatures 3D des modes : VRAI terrain, vrai chemin, props du thème,
+  //    le boss du mode au premier plan + particules thématiques. Rendu en
+  //    offscreen puis dataURL (mis en cache, généré une seule fois).
+  _modeArt(k) {
+    if (k === 'infini') {
+      // La carte infinie = toutes les cartes : bande de 5 aperçus (thème + boss)
+      const bosses = ['brute', 'frostking', 'abomination', 'golem', 'titan'];
+      const imgs = bosses.map((b, i) => {
+        const url = this._modeSceneShot(i, b, 320, 180);
+        return url ? `<img class="mode-shot" src="${url}" alt="" title="${b}">` : '';
+      }).join('');
+      return `<div class="mode-strip">${imgs}</div>`;
     }
+    const def = DIFFICULTIES[k] || {};
+    const thIdx = def.themeIdx != null ? def.themeIdx : 0;
+    const url = this._modeSceneShot(thIdx, def.finalBoss, 460, 262);
+    return url ? `<img class="mode-shot" src="${url}" alt="">` : '<div class="mode-art empty">aperçu indisponible</div>';
+  }
+
+  _modeSceneShot(themeIdx, bossKey, w = 460, h = 262) {
+    this._modeShotCache = this._modeShotCache || new Map();
+    const key = themeIdx + '|' + bossKey + '|' + w + 'x' + h;
+    const hit = this._modeShotCache.get(key);
+    if (hit) return hit;
+    let url = '';
+    try {
+      const th = CONFIG.themes[themeIdx] || CONFIG.themes[0];
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(th.sky);
+      scene.fog = new THREE.Fog(th.sky, (th.fog && th.fog[0]) || 40, 130);
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x2c3528, 1.05));
+      const dl = new THREE.DirectionalLight(0xffffff, 1.45);
+      dl.position.set(20, 34, 14);
+      scene.add(dl);
+      // --- terrain réel + chemin réel (mêmes géométries que la partie) ---
+      const ground = createGround({ x: 74, z: 58 });
+      ground.material.color.setHex(th.ground);
+      scene.add(ground);
+      scene.add(createPathRibbon(CONFIG.waypoints, 2.6, th.path, CONFIG.pathHeight || 0.5, th.ground));
+      if (th.volcano) {
+        const v = createVolcano(1);
+        v.position.set(-20, terrainHeight(-20, 12), 12);
+        v.rotation.y = 0.5;
+        scene.add(v);
+      }
+      // --- props du thème, en points fixes évitant le chemin ---
+      const props = (th.props && th.props.length) ? th.props : ['tree'];
+      const SPOTS = [[-22, -10], [-18, 8], [-12, -11], [-8, 10], [-4, -9], [2, 9], [6, -11], [10, 8], [14, -9], [18, 6], [22, -6], [20, 10], [-24, 2], [-14, -3], [8, -4], [16, 2], [-6, 4], [24, -11]];
+      let placed = 0;
+      for (const [sx, sz] of SPOTS) {
+        if (placed >= 16) break;
+        let clear = true;
+        for (const [wx, wz] of CONFIG.waypoints) {
+          const dx = sx - wx, dz = sz - wz;
+          if (dx * dx + dz * dz < 3.6 * 3.6) { clear = false; break; }
+        }
+        if (!clear) continue;
+        const p = createProp(props[(placed * 5) % props.length]);
+        p.position.set(sx, terrainHeight(sx, sz), sz);
+        p.rotation.y = (placed * 1.7) % (Math.PI * 2);
+        scene.add(p);
+        placed++;
+      }
+      // --- le boss du mode, en vedette ---
+      const boss = createBossModel(bossKey);
+      const bx = -1, bz = 3;
+      boss.position.set(bx, terrainHeight(bx, bz), bz);
+      boss.rotation.y = Math.atan2(12 - bx, 17 - bz);
+      scene.add(boss);
+      // --- particules flottantes (neige / braises / spores / cendres) ---
+      const pcol = [0xcfd8c0, 0xffffff, 0xff9a3c, 0xd8d0c0, 0x9fd0ff, 0xa8ff4f][themeIdx] || 0xffffff;
+      const n = 90;
+      const pos = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        pos[i * 3] = -26 + Math.random() * 52;
+        pos[i * 3 + 1] = 0.4 + Math.random() * 9;
+        pos[i * 3 + 2] = -16 + Math.random() * 32;
+      }
+      const pgeo = new THREE.BufferGeometry();
+      pgeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const pmat = new THREE.PointsMaterial({
+        size: 0.55, map: this._glowSprite(), transparent: true, opacity: 0.8,
+        depthWrite: false, blending: THREE.AdditiveBlending, color: pcol,
+      });
+      scene.add(new THREE.Points(pgeo, pmat));
+      // --- cadrage + rendu ---
+      const r = this._previewRenderer();
+      if (r) {
+        r.setSize(w, h);
+        const cam = new THREE.PerspectiveCamera(40, w / h, 0.1, 260);
+        cam.position.set(12, 8, 17);
+        cam.lookAt(-1, 1.7, 3);
+        r.render(scene, cam);
+        url = r.domElement.toDataURL('image/jpeg', 0.85);
+      }
+    } catch (e) { url = ''; }
+    if (url) this._modeShotCache.set(key, url);
+    return url;
+  }
+
+  // Sprite doux (halo radial) pour les particules — canvas 64 px, en cache
+  _glowSprite() {
+    if (this._glowTex) return this._glowTex;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const x = c.getContext('2d');
+    const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.4, 'rgba(255,255,255,.55)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+    this._glowTex = new THREE.CanvasTexture(c);
+    return this._glowTex;
+  }
+
+  // (ancienne illustration SVG, conservée en secours si le rendu 3D échoue)
+  _modeArtSVG(k) {
+    const def = DIFFICULTIES[k] || {};
+    const th = CONFIG.themes[def.themeIdx != null ? def.themeIdx : 0] || {};
+    const sky = th.sky || '#87a6c0'; const ground = th.ground || '#3f4a3a'; const path = th.path || '#8a6a44';
+    const gid = 'ag' + k;
+    let extra = '';
+    if (k === 'debutant') {
+      extra = `<circle cx="22" cy="60" r="7" fill="#7d7568"/><circle cx="33" cy="63" r="5" fill="#8d8578"/><path d="M126 62 L126 40 M126 48 L118 40 M126 50 L134 42" stroke="#6b5b45" stroke-width="3" fill="none" stroke-linecap="round"/>`;
+    } else if (k === 'moyen') {
+      extra = [18, 104, 132].map((x) => `<path d="M${x} 58 L${x + 7} 36 L${x + 14} 58 Z" fill="#2e5d46"/><path d="M${x} 50 L${x + 7} 30 L${x + 14} 50 Z" fill="#356a50"/>`).join('');
+      extra += [25, 60, 100, 140, 75, 120, 45].map((x, i) => `<circle cx="${x}" cy="${16 + ((i * 9) % 32)}" r="1.6" fill="#ffffff" opacity="0.9"/>`).join('');
+    } else if (k === 'avance') {
+      extra = `<path d="M92 62 L114 24 L136 62 Z" fill="#2b2622"/><path d="M106 38 L114 24 L122 38 Z" fill="#ff7a2f"/><circle cx="114" cy="38" r="4" fill="#ffc36b"/><ellipse cx="114" cy="62" rx="13" ry="3" fill="#ff8c3a" opacity="0.5"/>`;
+    } else if (k === 'impossible') {
+      extra = `<rect x="14" y="40" width="18" height="24" rx="3" fill="#565d57"/><rect x="17" y="34" width="12" height="8" rx="2" fill="#6a726a"/><circle cx="23" cy="52" r="5" fill="#7cfc00" opacity="0.95"/><circle cx="23" cy="52" r="9" fill="#7cfc00" opacity="0.25"/>`;
+    } else if (k === 'infini') {
+      extra = `<ellipse cx="80" cy="42" rx="26" ry="17" fill="none" stroke="#8d5cff" stroke-width="3" opacity="0.8"/><ellipse cx="80" cy="42" rx="16" ry="10" fill="none" stroke="#c79bff" stroke-width="2" opacity="0.9"/>`;
+    }
+    const emblem = k === 'impossible'
+      ? `<circle cx="138" cy="20" r="11" fill="#101510"/><text x="138" y="26" text-anchor="middle" font-size="16" fill="#ffd23e">☢</text>`
+      : k === 'infini'
+        ? `<text x="80" y="50" text-anchor="middle" font-size="26" fill="#e6d6ff" font-weight="700">∞</text>`
+        : '';
+    return `<svg viewBox="0 0 160 84" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${sky}"/><stop offset="1" stop-color="${sky}" stop-opacity="0.55"/></linearGradient></defs>
+      <rect width="160" height="84" fill="url(#${gid})"/>
+      <rect y="56" width="160" height="28" fill="${ground}"/>
+      <path d="M-4 84 C 30 70, 52 88, 78 74 S 130 62, 164 70 L 164 84 L -4 84 Z" fill="${path}"/>
+      ${extra}
+      <g><rect x="146" y="46" width="16" height="14" fill="#8a6a4a"/><path d="M144 46 L154 36 L164 46 Z" fill="#5d4630"/></g>
+      <g transform="translate(58 74)" fill="#3a4a33"><circle cx="0" cy="-26" r="5.4"/><rect x="-4.6" y="-22.4" width="9.2" height="13.4" rx="3"/><rect x="3.4" y="-21" width="9.6" height="3" rx="1.5" transform="rotate(-14 3.4 -21)"/><rect x="-7.4" y="-10" width="3.8" height="10.4" rx="1.8"/><rect x="-0.4" y="-10" width="3.8" height="10.4" rx="1.8"/></g>
+      ${emblem}
+    </svg>`;
   }
 
   // -- Shop ---------------------------------------------------------------
@@ -624,6 +902,8 @@ export class UI {
         const def = CONFIG.towers[k2];
         const capsSrc = d.towerCaps || {};
         const cap = Math.max(1, Math.min(capsSrc[k2] ?? 2, 5));
+        // préserve l'état ouvert/fermé du panneau de skins entre deux re-rendus
+        const miniWasOpen = !!(det.querySelector('#inv-skmini') && !det.querySelector('#inv-skmini').classList.contains('hidden'));
         this._invTowerKey = k2; this._invLv = lv;
         const rows = this._towerStatLines(k2, lv).map((r) => '<div>' + r + '</div>').join('');
         // Your tower skins — compact mini-rectangles behind a small toggle button
@@ -670,6 +950,26 @@ export class UI {
           </div>`;
         det.querySelectorAll('button[data-lv]').forEach((b) => {
           b.addEventListener('click', () => renderTowerDetail(k2, +b.dataset.lv));
+        });
+        // Re-binding à CHAQUE rendu : les boutons sont recréés à chaque
+        // changement de niveau, un listener unique (lié au 1er rendu) serait
+        // orphelin après un clic « Lv 2 » → bouton Skins mort.
+        if (miniWasOpen) det.querySelector('#inv-skmini')?.classList.remove('hidden');
+        const stg = det.querySelector('#skin-toggle');
+        if (stg) stg.addEventListener('click', () => {
+          const mini = det.querySelector('#inv-skmini');
+          if (mini) mini.classList.toggle('hidden');
+        });
+        det.querySelectorAll('button[data-skinid]').forEach((b) => {
+          b.addEventListener('click', () => {
+            const id = b.dataset.skinid;
+            g.equipSkin('tower', id);
+            this.showInventory();
+            requestAnimationFrame(() => {
+              const card2 = this.screenBody.querySelector(`[data-inv="t:${k2}"]`);
+              if (card2) card2.click();
+            });
+          });
         });
         this._bindInvDetClose();
       };
@@ -739,24 +1039,28 @@ export class UI {
       requestAnimationFrame(() => { try { det.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {} });
       this._bindInvDetClose();
 
-      const stg = this.screenBody.querySelector('#skin-toggle');
-      if (stg) stg.addEventListener('click', () => {
-        const mini = this.screenBody.querySelector('#inv-skmini');
-        if (mini) mini.classList.toggle('hidden');
-      });
+      // Branche uniquement pour les maisons / monstres : la branche tour
+      // (t:*) re-lie ses propres boutons dans renderTowerDetail à chaque rendu.
+      if (!key.startsWith('t:')) {
+        const stg = this.screenBody.querySelector('#skin-toggle');
+        if (stg) stg.addEventListener('click', () => {
+          const mini = this.screenBody.querySelector('#inv-skmini');
+          if (mini) mini.classList.toggle('hidden');
+        });
 
-      // Skin equip (tower or house) — then reopen the same card's detail
-      det.querySelectorAll('button[data-skinid]').forEach((b) => {
-        b.addEventListener('click', () => {
-          const id = b.dataset.skinid;
-          g.equipSkin(key.startsWith('h:') || key === 'h:base' ? 'base' : 'tower', id);
-          this.showInventory();
-          requestAnimationFrame(() => {
-            const card2 = this.screenBody.querySelector(`[data-inv="${key}"]`);
-            if (card2) card2.click();
+        // Skin equip (tower or house) — then reopen the same card's detail
+        det.querySelectorAll('button[data-skinid]').forEach((b) => {
+          b.addEventListener('click', () => {
+            const id = b.dataset.skinid;
+            g.equipSkin(key.startsWith('h:') || key === 'h:base' ? 'base' : 'tower', id);
+            this.showInventory();
+            requestAnimationFrame(() => {
+              const card2 = this.screenBody.querySelector(`[data-inv="${key}"]`);
+              if (card2) card2.click();
+            });
           });
         });
-      });
+      }
     });
   }
 
@@ -839,6 +1143,9 @@ const SHOP_TOWER_DESC = {
   frost:  'Gèle les zombies : ralentit leurs déplacements de 40% et inflige des dégâts de glace.',
   flame:  'Jet de flammes continu — fond tout ce qui s\u2019approche sur très courte portée.',
   mortar: 'Tirs en cloche avec dégâts d\u2019éclat : idéal pour les groupes serrés.',
+  shock:  'Éclair instantané qui SAUTE entre 3 cibles (dégâts en baisse à chaque saut) : parfait sur les groupes.',
+  gatling: 'Minigun à cadence folle — près de 12 impacts/s, un nuage de plomb très efficace en milieu de carte.',
+  farm:   'Tour de trésorerie : rapporte des pièces toutes les 6 s. Elle ne se défend pas, placez-la en sécurité !',
 };
 
 const TOWER_DESC = {
@@ -848,6 +1155,9 @@ const TOWER_DESC = {
   frost:  'Boule de glace ralentissante — étend la durée d\u2019action de vos autres tours.',
   flame:  'Concussion thermique continue sur très courte portée, dévastatrice en impasse.',
   mortar: 'Mortier à dégâts d\u2019éclat qui frappe des zones entières de la voie.',
+  shock:  'Bobine de Tesla : foudre instantanée sans projectile. L\u2019éclair saute ensuite sur 2 cibles en plus (60 % puis 35 % des dégâts) : ≈ 180 % des dégâts sur 3 zombies groupés. La montée de niveau raccourcit la cadence et élargit la portée.',
+  gatling: 'Minigun rotatif : environ 12 projectiles par seconde (≈ 38 dégâts/s) sur une moyenne portée. La reine des hordes — elle rafale jusqu\u2019au dernier zombie d\u2019un groupe.',
+  farm:   'Économie pure : rapporte +7 pièces toutes les 6 s, et le rendement augmente à chaque niveau. Aucune attaque — construisez-la près de la maison, loin du chemin.',
 };
 
 const BOSS_ABILITY = {

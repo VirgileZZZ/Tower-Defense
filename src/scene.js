@@ -39,8 +39,13 @@ export function createLights(scene) {
   return { hemi, dir };
 }
 
-export function createGround(size = 90) {
-  const geo = new THREE.PlaneGeometry(size, size, 64, 64);
+export function createGround(size = { x: 68, z: 52 }) {
+  // Taille du sol : nombre (carré) ou {x,z} rectangulaire. La carte est
+  // désormais plus grande que la zone constructible — le terrain visible
+  // déborde au-delà des limites de build pour un vrai sentiment d'espace.
+  const sx = typeof size === 'number' ? size : (size.x ?? 68);
+  const sz = typeof size === 'number' ? size : (size.z ?? 52);
+  const geo = new THREE.PlaneGeometry(sx, sz, Math.round(64 * (sx / 58)), Math.round(64 * (sz / 58)));
   // Add gentle rolling terrain relief (kept flat near the monster path).
   {
     const pos = geo.attributes.position;

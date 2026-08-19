@@ -148,6 +148,8 @@ export class Zombie {
 
   startDeath(kind) {
     if (this.dead) return;
+    // SFX mort : la ref game est fournie au spawn (zombie.game), sinon silencieux
+    if (this._game && this._game.sfx) this._game.sfx.kill();
     this.dead = true;
     this.death = { t0: perf(), kind };
     this._dying = true;
@@ -464,6 +466,56 @@ export class Tower {
   //   'strongest' -> the enemy with the most current HP
   //   'weakest'   -> the enemy with the least current HP
   //   'random'    -> a random enemy in range
+  // -- Électro : éclair instantané qui CHAÎNE sur les cibles proches ------
+  zapUpdate(game, now, frozen) {
+    if (frozen) return;
+    const d = this.def;
+    const target = this.acquireTarget(game);
+    if (!target) return;
+    aimTurret(this.model, target.model.position, 18);
+    const interval = this.statCooldown() * 1000;
+    if (now < this.nextShot) return;
+    this.lastShot = now; this.nextShot = now + interval;
+
+    const from = this.muzzleWorldPos();
+    let dmg = this.statDamage();
+    target.takeDamage(dmg, now);
+    // chaîne : 2 cibles successives les plus proches (60 % puis 35 %)
+    const hit = [target];
+    for (let i = 0; i < Math.max(1, d.chains); i++) {
+      let best = null, bd = Infinity;
+      for (const z of game.zombies) {
+        if (!z.alive || z.phased || hit.includes(z)) continue;
+        const dist = z.model.position.distanceTo(hit[hit.length - 1].model.position);
+        if (dist <= 3.4 && dist < bd) { bd = dist; best = z; }
+      }
+      if (!best) break;
+      dmg *= (i === 0 ? 0.6 : 0.35);
+      best.takeDamage(dmg, now);
+      hit.push(best);
+    }
+    game.vfx.zap(from, hit.map((h) => h.model.position));
+    if (game.sfx) game.sfx.shoot('shock');
+  }
+
+  // -- Ferme : génère des pièces toutes les ~6 s ---------------------------
+  farmUpdate(dt, game, now) {
+    const d = this.def;
+    const period = Math.max(3.5, (d.tickEvery || 6));
+    this._farmT = (this._farmT ?? 0) + dt; // dt est déjà mis à l'échelle du speed
+    if (this._farmT < period) return;
+    this._farmT -= period;
+    // revenu qui grimpe avec le niveau (+ income bonus / niveau, ×1.36 base)
+    const lvBonus = Math.round((d.incomeBase * 0.5) * (this.level - 1));
+    const gain = d.incomeBase + lvBonus;
+    game.money += gain;
+    // La ferme ne compte PAS dans les « pièces bankées » du save (anti-abuse
+    // sur le quit/menu) — ses gains restent dans la monnaie de la partie.
+    if (game.sfx) game.sfx.buy();
+    if (game.vfx) game.vfx.coinBurst(this.model.position, gain);
+    game.ui && game.ui.refreshHUD();
+  }
+
   acquireTarget(game) {
     const t = this.range;
     const cands = [];
@@ -501,6 +553,8 @@ export class Tower {
       case 'continuous': this.flameUpdate(dt, game, now, frozen); break;
       case 'splash': this.mortarUpdate(game, now, frozen); break;
       case 'single': this.singleUpdate(game, now, frozen); break;
+      case 'zap': this.zapUpdate(game, now, frozen); break;
+      case 'economy': this.farmUpdate(dt, game, now); break;
     }
 
     // recoil decay
@@ -541,6 +595,7 @@ export class Tower {
     if (now < this.nextShot) return;
     const from = this.muzzleWorldPos();
     game.vfx.muzzleFlash(from);
+    if (game.sfx) game.sfx.shoot(d.projectile === 'tracer' ? 'shell' : 'bullet');
     this.lastShot = now;
     const dur = (from.distanceTo(target.model.position) / d.projectileSpeed) + 0.02;
     game.spawnProjectile({
@@ -560,6 +615,7 @@ export class Tower {
     if (now < this.nextShot) return;
     const from = this.muzzleWorldPos();
     game.vfx.muzzleFlash(from);
+    if (game.sfx) game.sfx.shoot('frost');
     const d = this.def;
     const dur = Math.max(0.05, (from.distanceTo(target.model.position) / (d.projectileSpeed || 30)) + 0.02);
     game.spawnProjectile({
@@ -603,6 +659,7 @@ export class Tower {
     this.lastShot = now;
     aimTurret(this.model, to);
     game.vfx.muzzleFlash(from);
+    if (game.sfx) game.sfx.shoot('shell');
     game.spawnProjectile({
       kind: 'shell', from, to: to.clone(), target: null,
       damage: this.statDamage(), duration: 0.9, splash: this.statSplash(),

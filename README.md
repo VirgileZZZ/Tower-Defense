@@ -24,7 +24,7 @@
 13. [🧪 Tests automatisés](#-tests-automatisés)
 14. [📐 Notes de design](#-notes-de-design)
 15. [📜 Journal des ajouts](#-journal-des-ajouts)
-16. [🚀 Release v0.1.1](#-release-v011)
+16. [🚀 Release v0.1.1](#-release-v012)
 
 ---
 
@@ -79,7 +79,7 @@ Le **fantôme** suit la souris au-dessus du terrain : **vert** = place valide, *
 - Les **tours classiques** doivent être **loin** du chemin (clearance ≥ 1,2 u) — mais pas trop loin pour rester utiles.
 - Les **Mines** doivent être **proches** du chemin (≤ 4,5 u).
 - Les **Barricades** doivent être **sur** le chemin (≤ 1,5 u du centre) — elles sont les seules à exiger le chemin.
-- Les **Nécromants** et la **Ferme** ont une empreinte, pas de portée d'attaque.
+- Le **Nécromant** a une vraie **portée** (8, étendue par niveau) pour viser avec ses âmes ; la **Ferme**, elle, n'a que son empreinte.
 
 ### Limites de tours
 - **Par type** (posées simultanément) : Gunner 15 · Sniper 5 · Mine 10 · Frost 6 · Flame 4 · Mortar 5 · Électro 3 · Minigun 4 · Ferme 3 · Barricade 12 · Nécromant 3.
@@ -138,7 +138,7 @@ Le **fantôme** suit la souris au-dessus du terrain : **vert** = place valide, *
 | **Minigun** | 110 | Boutique 4 500 🪙 | rafale rapide | 3,2 dég · 0,085 s (≈ 38 DPS) · portée 7,5 | La reine des hordes |
 | **Ferme** | 120 | Boutique 7 000 🪙 | économie | +7 🪙 / 6 s | Ne se défend pas — près de la maison |
 | **Barricade** | 40 | Boutique 2 000 🪙 | **posée SUR le chemin** | 500 PV · soin lent | Mur : les mobs bloqués la grignotent (dégâts = leurs PV/s) |
-| **Nécromant** | 150 | Boutique 8 000 🪙 | **ressuscite les tués** | squelette 20 % PV · cd 8 s · 3 max | Fait ressortir ses kills en squelettes barrières |
+| **Nécromant** | 150 | Boutique 8 000 🪙 | **tire des âmes vertes** | 20 dég d'âme · cd 0,9 s · portée 8 | Si SON âme tue → squelette qui balaie la carte |
 
 ### Stats détaillées (Lv1 → Lv5)
 Formules (détail dans [Architecture](#-architecture-du-code)) :
@@ -158,7 +158,7 @@ Formules (détail dans [Architecture](#-architecture-du-code)) :
 | **Mine** | 45 / 61 / 83 / 113 / 154 | — (à l'impact) | rayon 2,2→3,2 | +dégâts, +rayon |
 | **Ferme** | — (économie) | 6 s / cycle | — | revenu 7 / 11 / 14 / 18 / 21 🪙 |
 | **Barricade** | — (PV) | — | — | **PV 500 / 850 / 1 200 / 1 550 / 1 900** |
-| **Nécromant** | — (soutien) | cd 8 / 7 / 6 / 5 / 4 s | — | **% squelette 20 / 31 / 43 / 54 / 65** |
+| **Nécromant** | 20 / 26 / 35 / 46 / 61 (âme) | 0,90 / 0,84 / 0,78 / 0,72 / 0,66 | 8,0→9,6 | convocation 8/7/6/5/4 s · **% squelette 20 / 31 / 43 / 54 / 65** |
 
 ### Mécaniques spécifiques
 - **Gunner / Sniper / Minigun** (tir simple) : projectile physique (balle / traceur). Le Sniper a une balle quasi instantanée (vitesse 90).
@@ -169,7 +169,7 @@ Formules (détail dans [Architecture](#-architecture-du-code)) :
 - **Électro** : coup d'éclair **instantané** qui **saute** entre cibles (dégâts décroissants 100 % / 60 % / 35 % / 20 %). Le nombre de **chaînes augmente avec le niveau** (point 8) : 2 en Lv1 → **4 en Lv5**.
 - **Ferme** : génère des pièces toutes les 6 s. Ne se défend pas — à protéger.
 - **Barricade** (nouveauté) : posée **sur le chemin**. Un zombie qui arrive dessus se cale et **grignote** la barricade en infligeant un montant = **ses PV / seconde** ; la barricade se **soigne lentement**. Quand elle tombe, le chemin est de nouveau libre. C'est un **mur éphémère** pour gagner du temps.
-- **Nécromant** (nouveauté) : dans son empreinte, il **vole les kills** (zombies tués ou fuyants) et, à intervalle régulier, **ressuscite un squelette** près de la base. Le squelette marche **dans le sens inverse** (vers l'entrée) pour aller au-devant de la horde et **se sacrifie** (ses dégâts = ses PV). **3 Nécromants max** posés, **3 squelettes vivants max par Nécromant**.
+- **Nécromant** (redesign v0.1.1) : il **tire des âmes vertes** (projectiles, 20 dég → 61 en Lv5). **Seul le coup de grâce de SON âme** réveille un squelette près de la base (PV = % du monstre tué, 20 %→65 %). Le squelette marche **vers la horde** (sens inverse) et, **au contact d'un zombie, échange leurs PV** (chacun subit les PV actuels de l'autre). **Indétectable par nos tours** (aucun friendly fire) ; ne grignote pas les barricades. **3 Nécromants max** posés, **3 squelettes vivants max par Nécromant**.
 
 ### Niveaux (Lv1 → Lv5)
 - Plafond de départ : **Lv2** pour chaque tour. Les paliers **Lv3 / Lv4 / Lv5** s'achètent dans la Boutique (« Niveaux avancés »), **par type de tour** : **1 200 / 3 000 / 7 000 🪙** (séquentiel : Lv3 avant Lv4, Lv4 avant Lv5).
@@ -207,10 +207,11 @@ Les PV/vitesse sont ensuite **mis à l'échelle par la vague** (courbe du mode) 
 | **radiant** | ×1,12 | ×1,05 | +8 % | +5 % | radio |
 
 ### Le Squelette (troupe du Nécromant)
-- Entité `kind:'skeleton'` : **pas de fuite** (n'atteint jamais la base), `reward 0`, invulnérable au gel.
-- **PV** = % des PV du monstre source (20 % Lv1 → 65 % Lv5), **dégâts = ses PV** (se sacrifie), meurt en **1 frappe**.
+- Entité `kind:'skeleton'` : **pas de fuite** (n'atteint jamais la base), `reward 0`, **indétectable par nos tours** (ciblage, chaînes, éclats, mines…).
+- **PV** = % des PV du monstre **tué par l'âme** de son Nécromant (20 % Lv1 → 65 % Lv5, min 8 PV).
 - Marche **en sens inverse** (`progress` décroît) depuis la base vers l'entrée, pour intercepter la horde.
-- Ne grignote pas les barricades.
+- **Au contact d'un zombie : échange de PV mutuel** — le zombie subit les PV actuels du squelette, le squelette subit ceux du zombie (morts simultanées possibles). 1 échange / 0,9 s par squelette.
+- Ne grignote pas les barricades, ne touche pas la base.
 
 ### Fuites & règle d'or
 - Un zombie qui atteint la base retire ses **dégâts de fuite** (2 / 2 / 5 ; 8 à 16 pour les boss selon leur taille).
@@ -420,7 +421,7 @@ icades, squelettes, horloge…). Le **build de production doit rester propre** (
 - Stats de niveau : acheter Lv3/Lv4 d'un Gunner → 4 Gunners posées → **les 4** montent au cap.
 - Équilibrage vitesse : Gunner (cd 0,5 s) → ×1 = 2 tirs/s, ×4 = 8 tirs/s, ×6 = 11 tirs/s.
 - Barricade : 500→0 sous 1 mob de 25 PV/s en ~20 s ; placement validé/refusé selon distance au chemin.
-- Nécromant : 1 squelette spawn en reverse, meurt en 1 frappe, 3e refusé (cap), % 20→65 au niveau.
+- Nécromant : l'âme (dégâts 20) tue un zombie de 12 PV → **1 squelette** (spawn 0,985, reverse, PV = max(8, 12×20 %) = 8) ; kill par une autre tour → **0 squelette** ; échange de PV au contact (100↔20 → 80 / mort) ; 3 squelettes vivants max par Nécromant.
 - progress.json : UI + 4 boutons + statut, `fsSupported=true`, export/délier sans erreur, persistance LS intacte.
 
 ---
@@ -440,6 +441,7 @@ icades, squelettes, horloge…). Le **build de production doit rester propre** (
 
 *(Du plus récent au plus ancien.)*
 
+- **v0.1.1 — Redesign Nécromant + 10 bugs corrigés** : le Nécromant **tire des âmes** (20→61 dég, portée 8) ; un squelette ne naît que du **coup de grâce de son âme** ; **échange de PV mutuel** au contact ; **zéro friendly fire** (exclusion `skeleton` partout) ; minions de l'Abomination spawn **sur le boss** ; `VFX.dispose()` sur Game Over/Victoire/menu ; modèles **Électro** et **Barricade** refaits ; décor de map **stable** entre vagues ; **Minigun** délaguée (géos/mats partagés, pas de flash, popups throttlés) ; **volcan** hors du chemin (recherche d'emplacement) ; **ralenti d'attaque du Frost** 40→60 % (mini-bosses, boss final immunisé) ; HUD « T. » + total gagné de la Ferme. *(→ voir [Release v0.1.1](#-release-v012).)*
 - **Nouveautés v2 (terminées, test navigateur OK)**
   - **Barricade** : 11e tour posée **sur le chemin**, PV 500→1 900 (Lv), les mobs bloqués la grignotent (dégâts = leurs PV/s), soin lent. `nearPath` ajoutée à `canPlace()`.
   - **Tour Nécromant + Squelettes** : ressuscite les kills en squelettes (barrières) près de la base, marche en sens inverse, se sacrifie (dégâts = PV), 20 %→65 % au niveau, 3 max posées. VFX `skeletonSummon`.

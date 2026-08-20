@@ -455,51 +455,48 @@ icades, squelettes, horloge…). Le **build de production doit rester propre** (
 
 ---
 
-## 🚀 Release v0.1.1
+## 🚀 Release v0.1.2
 
-> **Nouvelle version** : 3 nouveautés de gameplay (2 tours + sauvegarde fichier) et la correction de **11 bugs** signalés. Le tout **testé** (Puppeteer headless, zéro erreur console). La version précédente (v0.1.0) posait les bases : 9 tours, 5 modes de difficulté, 6 thèmes, skins 3D, sons WebAudio, boutique/économie.
+> **Version corrections + redesign Nécromant** : le Nécromant **tire de vraies âmes** (un squelette ne naît que si **SON âme** tue), les squelettes font un **échange de PV mutuel** au contact des zombies, et **10 bugs** signalés sont corrigés (friendly fire, modèles 3D, décor de carte, particules gelées, lag Minigun, volcan sur le chemin, gel d'attaque du Frost…). Le tout **testé** : 9/9 scénarios Puppeteer + régressions (smoke, speed ×1/×4/×6, features, progress.json), zéro erreur console.
 
-### ✨ Nouveautés
+### ✨ Redesign — Tour Nécromant & Squelettes
 
-1. **🧱 Barricade** — 11ᵉ tour, posée **sur le chemin** (les autres tours l'excluent ; `canPlace()` exige `nearPath` ≤ 1,5 u).
-   - PV **500 → 1 900** (Lv1→Lv5), **soin lent** intégré.
-   - Un zombie bloqué **grignote** la barricade en infligeant un montant = **ses PV / seconde** (`path.js : blockedBy → barricade` + `damageBarricade`). C'est un **mur éphémère** pour gagner du temps.
-   - Modèle 3D : palissade d'épines (11 piquets) + rangée de pointes. Boutique : **2 000 🪙**.
-   - *Test : 500→0 sous un mob de 25 PV/s ; placement sur/loin du chemin validé/refusé.*
+- **Le Nécromant est maintenant une tour de tir active** : il lance des **âmes vertes** (projectile réel, vitesse 24) — **20 dégâts** (20 / 26 / 35 / 46 / 61 par niveau), cadence **0,9 s → 0,66 s**, portée **8 → 9,6**.
+- **Un squelette naît UNIQUEMENT si l'âme de CE nécromant porte le coup de grâce** (attribution par projectile, callback `onKill`). Plus de « vol de kills » ambiant.
+- Le squelette apparaît **près de la base** avec **PV = % du PV du monstre tué** (20 % Lv1 → 65 % Lv5, min 8 PV) et marche **vers la horde** (sens inverse).
+- **Au contact d'un zombie : échange de PV mutuel** — le zombie subit les PV actuels du squelette, et le squelette subit les PV actuels du zombie (les deux peuvent mourir ensemble). Anti-spam : 1 échange / 0,9 s par squelette, avec VFX (anneau vert + chiffres flottants).
+- **Zéro friendly fire** : les squelettes sont invisibles pour **toutes** nos tours — ciblage simple, chaînes Électro, éclats Frost/Mortar, mines, re-ciblage. Ils ne grignotent pas les barricades et ne touchent pas la base.
+- *Tests : âme tue un walker de 12 PV → 1 squelette (spawn 0,985, reverse, 8 PV) ; kill par Gunner → 0 squelette ; échange 100↔20 PV → zombie 80 PV, squelette mort ; 0 projectile friendly.*
 
-2. **💀 Tour Nécromant + Squelettes** — la Nécro **vole les kills** dans son empreinte (un kill = dégâts ≥ PV ou fuite) et, à intervalle (**cd 8→4 s** selon le niveau), **ressuscite un squelette près de la base** (`spawnSkeleton`).
-   - Le squelette marche **dans le sens inverse** (`progress −= speed·dt`) pour aller au-devant de la horde, **se sacrifie** (ses dégâts = ses PV) et meurt en 1 frappe.
-   - **PV du squelette = % des PV du monstre source : 20 % (Lv1) → 65 % (Lv5).**
-   - Caps : **3 Nécromants** posés max + **3 squelettes** vivants par Nécromant. VFX `skeletonSummon` (os + particules). Boutique : **8 000 🪙**.
-   - *Test : 1 squelette reverse, meurt en 1 frappe, 3ᵉ refusé (cap), % 20→65 au niveau.*
-
-3. **💾 Sauvegarde `progress.json`** — la progression est désormais aussi sauvegardée dans un **fichier `progress.json`**, en plus du brouillon `localStorage`.
-   - **File System Access API** : le handle est stocké en **IndexedDB** ; 1 clic pour **lier** le fichier (`showSaveFilePicker`). **Auto-save** débouncé (350 ms), jamais bloquant (`queryPermission` avant écriture).
-   - Au **boot**, le fichier lié est la **source de vérité** : il **récupère la progression** si le brouillon localStorage a été effacé.
-   - **Fallback** (Safari/Firefox) : boutons **Exporter** / **Importer** `progress.json`. `Délier` disponible.
-   - **Jamais effacé** sauf le bouton **Reset** (qui réécrit le fichier à l'état par défaut). UI dans **Paramètres** : 🔗 Lier / ⬇️ Exporter / ⬆️ Importer / Délier + statut.
-   - *Test : UI + 4 boutons + statut OK, `fsSupported=true`, export/délier sans erreur, persistance LS intacte.*
-
-### 🐛 Bugs corrigés (11)
+### 🐛 Bugs corrigés (10)
 
 | # | Bug | Correction |
 |---|---|---|
-| 1 | **Plafonds de niveau inutilisables en partie** : on achetait Lv3/4/5 en Boutique mais on ne pouvait plus améliorer les tours en jeu. | `Tower.levelCap()` lisait `saveData.towerCaps[this.key]` alors que Tower n'a pas de `.key` (c'est `.type`), et `this.game` n'était pas stocké → le cap restait à 2. Fix : `this.game = game` + `caps[this.type]`. |
-| 2 | **Un achat de niveau ne s'appliquait qu'à une tour** (pas à toutes du même type). | Même racine que le #1 : le cap mal lu bloquait tout. Désormais **toutes** les tours du type montent au cap acheté (vérifié : 4 Gunners → les 4 en Lv4). Les paliers restent séquentiels (Lv3 avant Lv4). |
-| 3 | **The Frost King « glace rien »** : le gel fonctionnait mais n'était pas visible (alors que les mini-boss gelaient bien). | Nouveau `Tower.icePetrify(3 s)` **visible** (teinte glace `#63C8FF`, restaurée à la fonte), rayon **6 → 10**. |
-| 4 | **Le mode ∞ Infini s'arrêtait à la vague 1** (aucune vague suivante). | La branche Infini de `_checkWaveComplete` était un no-op → `autoWaveReady` jamais armé. Fix : on l'arme comme le mode fini ; la vague n+1 est fabriquée par `buildInfiniteWave`. |
-| 5 | **Pyro Lord (Moyen, mini-boss vague 5) trop létal** : 2-shottait la base et tirait trop vite. | Boule de feu **18 → 5 dégâts**, **délai de 5 s** après le spawn avant la 1ʳᵉ boule, puis **1 boule / 5 s**. |
-| 6 | **Pas de limite d'équipement** : on pouvait équiper/poser toutes ses tours. | **Max 5 tours équipées** (`equippedTowers`). Une tour **achetée n'est PAS équipée par défaut** → à équiper dans l'Inventaire pour jouer. Badges « ⚔ Équipée / Non équipée » + boutons Équiper/Déséquiper. |
-| 7 | **La zone de portée restait affichée après « Rejouer »**. | `_resetState()` appelle désormais `hideTowerRange()` + `hideTowerPanel()` (anneau retiré, sélection nulle). |
-| 8 | **Électro : aucune amélioration de chaînes avec le niveau**. | Nouveau `statChains()` : base 2 + 1 chaîne tous les 2 niveaux → **4 chaînes en Lv5** (dégâts décroissants). Cap : 3 Électro posées. |
-| 9 | **Aucun nombre max de tours posées**. | Caps **par mode** (Débutant 30 / Moyen 25 / Avancé 20 / Impossible 15 / Infini 30) **+ par type** (Gunner 15, Sniper 5, Ferme 3, Mine 10, Frost 6, Flame 4, Mortar 5, Électro 3, Minigun 4, Barricade 12, Nécromant 3). HUD : compteur « TOURS x / max » + badge **MAX**. |
-| 10 | **À ×4/×6, les tours n'accéléraient pas comme les zombies**. | Tous les timers de gameplay utilisaient `performance.now()` (temps réel). Ajout d'une **horloge de jeu `gameTime`** (ms, mise à l'échelle de la vitesse) : tours, projectiles, boss, gel/ralenti suivent le jeu. Test : Gunner ×1 = 2 tirs/s, ×4 = 8 tirs/s (ratio exact). |
-| 11 | **Nécromant : les minions spawnnaient loin de la base**. | `spawnMinion(pos)` ignorait `pos` (fixait `progress = 0,9`). Fix : `path.nearestProgress(pos)` → le minion sort **de terre à la position** du boss, avec animation d'émergence + VFX `earthSpawn`. |
+| 1 | **Les squelettes du Nécromant se faisaient viser/tirer dessus par nos tours.** | Drapeau `z.skeleton` exclu **partout** : `acquireTarget()`, chaînes Électro, éclats Frost/Mortar, mines, re-ciblage des projectiles. Test : 0 tirs friendly sur un squelette. |
+| 2 | **Les squelettes traversaient les zombies sans rien échanger.** | **Échange de PV au contact** : chacun subit les PV actuels de l'autre (morts simultanées possibles) + VFX d'impact. |
+| 3 | **Le Nécromant ne tirait pas et ne faisait aucun dégât.** | Redesign : tour de tir active (âme = 20 dég, cd 0,9 s, portée 8) ; les formules `statDamage/statCooldown/statRange` s'appliquent normalement. |
+| 4 | **Le Nécromant spawnnait des squelettes sans avoir tué de monstres.** | Le squelette n'existe que via le **coup de grâce de son âme** (callback par projectile) + file d'attente de 1 (jamais 2 en attente). |
+| 5 | **L'Abomination (boss) spawnnait ses minions à des endroits aléatoires du chemin.** | `spawnMinion(pos, progress)` reçoit maintenant le **progress exact du boss** → le minion sort de terre **sur le boss** (test : 0,289 vs 0,288 attendus). |
+| 6 | **Électro : particules/restes visibles en fin de partie + modèle 3D bugué.** | `VFX.dispose()` appelé sur **Game Over, Victoire et retour au menu** (pool d'effets + popups nettoyés). Modèle refait : socle hexagonal, corps cuivré, 5 bandes enroulées émissives, couronne + noyau — **plus de piliers/boules latérales**. |
+| 7 | **À chaque nouvelle vague, le décor de la map se re-déplaçait (même map).** | `applyTheme()` **saute la re-dispersion** si le thème ne change pas (modes finis = carte stable) ; test : 49 props, 0 déplacé entre deux vagues. |
+| 8 | **La Minigun faisait laguer/crasher le jeu.** | 3 mesures : **géométries+matériaux partagés** entre projectiles (prototypes, plus d'allocation/instançage), **flash de bouche coupé** pour le Gatling (11 tirs/s → 0 flash), **popups de dégâts throttlés** (1 / 70 ms, gros impacts exemptés). |
+| 9 | **Carte volcanique : le volcan était posé SUR le chemin.** | `_placeVolcano()` **recherche** un emplacement net (distance min au chemin ≥ 14, au-delà des rochers) — mesuré **25 u** du chemin. |
+| 10 | **Le Frost ne ralentissait pas la vitesse d'attaque des ennemis.** | Nouveau **ralenti d'attaque 40 %→60 %** (selon niveau) appliqué avec le gel : capacités des boss (volcan, foudre, téléportation, summon) **plus lentes** sur les mini-bosses. Le **boss final est immunisé** (règle d'or : un boss n'est pas ralentissable jusqu'au bout). |
+
+### 🎁 En plus (qualité de vie)
+
+- **HUD** : compteur renommé **« T. »** + infobulle — « Tours **posées** / maximum autorisé par le mode (sans rapport avec les vagues) ».
+- **Ferme** : le panneau affiche désormais le **total gagné** cumulé (`_farmEarned`).
+- **Skins lave** : plus de boules flottantes — **magma au sol** + fissures au niveau du terrain.
+- **Barricade** : modèle refait en **palissade de piquets** (5 piquets pointus + 2 madriers), posée **perpendiculairement au chemin**.
+- **Projets de docs** : descriptions longue/courte du Nécromant et des squelettes réécrites dans le jeu et ce README.
 
 ### ✅ État
-> ✅ **Tout est terminé et testé.** 3 nouveautés + 11 corrections, zéro régression (tests features, persistance et boot refaits après chaque changement).
+
+> ✅ **100 % testé** : 9/9 scénarios (âme→squelette, kill tiers→rien, échange de PV, 0 friendly, minions du boss, map stable, VFX nettoyés, total Ferme, Frost mini-boss/boss final) + smoke, vitesse ×1/×4/×6, features et progress.json repassés. Zéro erreur console.
 
 ### 📝 Note dev (rappels pratiques)
+
 - **Serveur dev** : port **5201** (`npx vite --port 5201`) — **jamais** de `taskkill node`.
 - **Tests** : Puppeteer-core headless, `--use-gl=angle --use-angle=swiftshader`, Chrome `C:/Users/Home/.cache/puppeteer/chrome/win64-152.0.7977.42/chrome-win64/chrome.exe`.
 - `window.__game`, `window.__CONFIG`, `window.__DIFFICULTIES`, `window.__terrainHeight` exposés par `main.js` après init.

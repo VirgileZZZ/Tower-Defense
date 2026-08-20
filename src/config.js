@@ -355,15 +355,20 @@ export const CONFIG = {
       radius: 1.3,      // empreinte (pour l'anneau fantôme)
       upgrade: { hp: 350, block: 0.2 },
     },
-    // Nécromant (troupe) : ressuscite les monstres tués en SQUELETTES qui
-    // marchent EN SENS INVERSE depuis la base pour aller au-devant des ennemis.
-    // Le squelette « se sacrifie » (dégâts = PV). PV = % des PV du monstre source
-    // (20 % au Lv1 → 65 % au Lv5). 3 max posées.
+    // Nécromant (troupe) : tire des ÂMES qui blessent la horde. Chaque monstre
+    // tué PAR SON PROPRE TIR (le coup de grâce d'une de ses âmes) est ressuscité
+    // en SQUELETTE qui sort près de la BASE et marche EN SENS INVERSE au-devant
+    // de la horde : au contact d'un monstre, le squelette EXCHANGE SES PV (les
+    // deux prennent les PV de l'autre — ni oneshot ni passage au travers).
+    // PV du squelette = % des PV du monstre source (20 % → 65 %). 3 max posées.
     necro: {
       key: 'necro', name: 'Nécromant', cost: 150, kind: 'necro',
-      range: 3,          // anneau d'empreinte (pas une vraie portée d'attaque)
-      cooldown: 8,       // s entre deux résurrections (Lv1)
-      upgrade: { cooldown: -1 }, // −1 s / niveau (Lv5 = 4 s)
+      range: 8,          // vraie portée des âmes
+      cooldown: 0.9,     // s entre deux âmes (Lv1)
+      damage: 20,        // dégâts par âme (croît ×1,32/niveau)
+      projectile: 'soul', projectileSpeed: 24,
+      summonEvery: 8,    // s entre deux résurrections (Lv1) — min 2 s
+      upgrade: { cooldown: -0.06, range: 0.4, summon: -1 }, // Lv5 : 0,66 s / 4 s
     },
   },
   towerMaxLevel: 5,

@@ -154,6 +154,7 @@ export class Game {
     this._screenMode = 'menu';
     if (this.state === 'PLAYING') { this.state = 'PAUSED'; this.lastFrame = performance.now(); }
     if (this.state !== 'MENU') this.state = 'MENU';
+    this.vfx.dispose(); // on ne laisse pas des particules/traînées sur le fond du menu
     this.ui.showMenu(this._ctlHint());
   }
 
@@ -676,6 +677,8 @@ export class Game {
       if (bossKey === 'pyrolord') z._atkT = this.gameTime;
       // Mini-boss : ne oneshotte PAS la maison — il inflige 1/2 des PV de base
       if (e.mini) z.baseDamage = Math.max(5, Math.round((this.modeDef ? this.modeDef.baseHP : 40) / 2));
+      // Boss FINAL (sans le flag mini) : insensible au gel d'attaque du Frost
+      z.isFinalBoss = !e.mini;
     } else {
       z = new Zombie({ type: e.type, skin: e.skin, hpScale: this.currentWave.hp, spScale: this.currentWave.sp });
     }
@@ -692,11 +695,15 @@ export class Game {
     this.ui.refreshHUD();
   }
 
-  spawnMinion(pos) {
-    // Bug corrigé : le minion sort sous TÈRE là où se trouve le Nécromant (pos),
-    // et plus près de la base (progress 0.9 codé en dur).
-    let prog = 0.9;
-    if (this.path && this.path.nearestProgress) prog = this.path.nearestProgress(pos.x, pos.z);
+  spawnMinion(pos, knownProgress) {
+    // Le minion sort de la TERRE juste derrière le boss. Le progress exact du
+    // boss est préféré : la recherche « plus proche point du chemin » peut
+    // attraper un AUTRE segment (le chemin zigzague et se croise) — bug «
+    // minion au milieu de la map ».
+    let prog;
+    if (Number.isFinite(knownProgress)) prog = knownProgress;
+    else if (this.path && this.path.nearestProgress) prog = this.path.nearestProgress(pos.x, pos.z);
+    else prog = 0.9;
     // juste un cran derrière le boss pour l'effet « émerge du sol »
     prog = Math.min(0.98, Math.max(0.01, prog - 0.012));
     const z = new Zombie({ type: 'walker', skin: 'default', hpScale: this.currentWave ? this.currentWave.hp : 1, spScale: 1 });
@@ -708,12 +715,11 @@ export class Game {
     if (this.vfx) this.vfx.earthSpawn(this.path.pointAt(prog));
   }
 
-  // Nécromant : un monstre meurt → on lui distribue ce « cadavre » (la dernière
-  // source l'emporte ; chaque tour n'a qu'UNE résurrection en attente).
-  onMonsterKilled(z) {
-    for (const t of this.towers) {
-      if (!t.destroyed && t.type === 'necro') t.feedKill(z.maxHp, z.type);
-    }
+  // Un monstre meurt. (Le Nécromant ne « grasse » plus toutes les morts :
+  // seuls les coups de grâce de SES PROPRES ÂMES ressuscitent — géré par le
+  // hook onKill des projectiles, Tower.onSoulKill.)
+  onMonsterKilled() {
+    // hook conservé pour l'avenir (stats, achievements…)
   }
 
   // Squelette (troupe du Nécromant) : sort près de la BASE et marche en SENS
@@ -907,6 +913,10 @@ export class Game {
   _gameOver() {
     if (this.state === 'GAMEOVER') return;
     if (this.sfx) this.sfx.lose();
+    // La boucle de jeu s'arrête ici : vfx.update() ne tourne plus, donc les
+    // effets en cours (éclairs Électro, explosions, particules…) seraient
+    // GELÉS à l'écran. On nettoie tout derrière l'écran de fin.
+    this.vfx.dispose();
     this.state = 'GAMEOVER';
     this._bankCoins();
     this.ui.showScreen({
@@ -922,6 +932,7 @@ export class Game {
 
   _win() {
     if (this.state === 'WIN') return;
+    this.vfx.dispose(); // idem : pas d'effets gelés derrière l'écran de victoire
     this.state = 'WIN';
     // Débloque progressif : gagner un mode débloque le suivant
     const mk = this.modeKey && this.modeDef ? this.modeDef.key : null;
@@ -999,6 +1010,11 @@ export class Game {
     // carte dédiée. En mode Infini la map tourne en boucle toutes les 5 vagues.
     if (this.modeDef && !this.infiniteMode) {
       const idx = this.modeDef.themeIdx ?? 0;
+      // BUG CORRIGÉ : sans ce check, les décors étaient RE-SCATTERÉS (positions
+      // aléatoires) à CHAQUE nouvelle vague → « la map rebouge ». On ne
+      // réapplique que si le thème a vraiment changé.
+      if (idx === this._themeIdx && !this._forceTheme) return;
+      this._forceTheme = false;
       return this._applyThemeIdx ? this._applyThemeIdx(idx) : null;
     }
     // (Infini) : the visual theme rotates every 5 waves and KEEPS cycling forever

@@ -70,7 +70,9 @@ export class Zombie {
     this._flash = 0;
 
     this.progress = 0;
-    this.slow = { pct: 0, until: 0 };
+    this.slow = { pct: 0, atkPct: 0, until: 0 }; // atkPct : gel des capacités (Frost)
+    this.isFinalBoss = false; // boss final : insensible au ralentissement d'attaque
+    this._tradeCd = 0;        // Squelette : anti-spam de l'échange de PV au contact
     this.dead = false;
     this._dying = false;
     this._deathDone = false;
@@ -110,14 +112,19 @@ export class Zombie {
     return f;
   }
 
-  applySlow(pct, duration, now) {
+  applySlow(pct, duration, now, atkPct = 0) {
     const p = pct * (1 - this.slowResist);
-    if (p > 0.001) {
+    // Ralenti d'ATTAQUE (Frost) : pose sur tous les monstres ET les mini-boss
+    // — le boss final est immunisé (demande du joueur).
+    const a = this.isFinalBoss ? 0 : atkPct * (1 - this.slowResist);
+    if (p > 0.001 || a > 0.001) {
       const until = now + duration;
       if (this.slow.pct <= p || this.slow.until <= now) {
-        this.slow = { pct: Math.max(this.slow.pct, p), until };
+        this.slow = { pct: Math.max(this.slow.pct, p), atkPct: Math.max(this.slow.atkPct || 0, a), until };
       } else {
-        this.slow.until = until; // refresh duration, keep max pct
+        this.slow.pct = Math.max(this.slow.pct, p);
+        this.slow.atkPct = Math.max(this.slow.atkPct || 0, a);
+        this.slow.until = until; // refresh duration, keep max values
       }
     }
   }
@@ -170,6 +177,8 @@ export class Zombie {
   }
 
   update(dt, game, now) {
+    // fenêtre anti-spam de l'échange de PV (squelettes) — horloge de jeu
+    if (this._tradeCd > 0) this._tradeCd = Math.max(0, this._tradeCd - dt);
     // flash decay
     if (this._flash > 0) {
       this._flash -= dt;
@@ -265,6 +274,30 @@ export class Zombie {
       this.reachedBase = true;
       game.onZombieReachedBase(this);
     }
+
+    // Squelette : au CONTACT d'un monstre, échange de PV — le squelette inflige
+    // ses PV au monstre ET encaisse les PV du monstre (les deux valeurs sont
+    // capturées AVANT l'échange : les deux peuvent mourir dans la même frame).
+    // Ni oneshot (un squelette à 5 PV fait 5 dégâts) ni passage au travers.
+    if (this.skeleton && this.alive && this._tradeCd <= 0) {
+      this._tradeCd = 0.9; // fenêtre anti-spam (horloge de jeu)
+      let best = null, bd = 1.7 * 1.7; // rayon de contact
+      for (const o of game.zombies) {
+        if (o === this || !o.alive || o.skeleton || o.phased) continue;
+        const d = o.model.position.distanceToSquared(this.model.position);
+        if (d < bd) { bd = d; best = o; }
+      }
+      if (best) {
+        const myHP = this.hp;       // ce qu'on donne
+        const theirHP = best.hp;    // ce qu'on encaisse
+        best.takeDamage(myHP, now);
+        if (this.alive) this.takeDamage(theirHP, now);
+        if (game.vfx) {
+          game.vfx.ring(this.model.position, 0xbfe3ff, 1.2);
+          game.vfx.damagePopup(this.model.position, myHP, false);
+        }
+      }
+    }
   }
 
   // La 1re barricade (intacte) qui se trouve juste devant nous sur le chemin.
@@ -290,7 +323,12 @@ export class Zombie {
 
   bossStep(game, now) {
     const key = this.bossKey;
-    const cd = 5000; // ms — 'now' = horloge de jeu (scalée par le speed)
+    // Frostmage : les capacités des monstres/mini-boss sont plus lentes pendant
+    // le gel (le boss final est immunisé — atkPct forcé à 0 dans applySlow).
+    let cd = 5000; // ms — 'now' = horloge de jeu (scalée par le speed)
+    if (now < this.slow.until && (this.slow.atkPct || 0) > 0) {
+      cd *= 1 + this.slow.atkPct;
+    }
     if (now - this._atkT < cd) return;
     this._atkT = now;
     const anow = performance.now(); // temps RÉEL pour les animations cosmétiques
@@ -333,8 +371,11 @@ export class Zombie {
         break;
       }
       case 'abomination': {
+        // Le minion sort où le boss EST : on passe SON progress (la recherche
+        // « plus proche point du chemin » peut attraper un autre segment du
+        // chemin qui se croise — bug « minion au milieu de la map »).
         bossSpawnMinions(this.model, anow);
-        game.spawnMinion(this.model.position);
+        game.spawnMinion(this.model.position, this.progress);
         break;
       }
       case 'golem': {
@@ -399,6 +440,12 @@ export class Tower {
     this.model = createTowerModel(type);
     this.model.position.set(x, terrainHeight(x, z), z);
     this.model.userData.tower = this;
+    // Barricade : le mur de palisade est PERPENDICULAIRE au chemin (les planches
+    // du modèle sont alignées sur l'axe local X ; on tourne vers la tangente).
+    if (type === 'barricade' && game.path) {
+      const tan = game.path.tangentAt(game.path.nearestProgress(x, z));
+      this.model.rotation.y = Math.atan2(tan.x, tan.z);
+    }
     game.scene.add(this.model);
 
     this.nextShot = 0;
@@ -410,7 +457,9 @@ export class Tower {
     this.lastShot = -1000;
     this.triggered = false;  // for mines
     this._hitFlash = 0;     // Barricade : flash d'impact
-    this._feed = null;      // Nécromant : « cadavre » en attente de résurrection
+    this._pending = null;   // Nécromant : squelette en attente de résurrection
+    this.nextSummon = 0;    // fenêtre de résurrection (horloge de jeu)
+    this._farmEarned = 0;   // Ferme : total gagné par cette tour (panneau)
     this.hp = def.hp ?? 60; // Barricade : gros réservoir (def.hp) ; tours = 60
     this.maxHp = this.hp;
     // Targeting priority: 'first' (most-progressed) | 'strongest' (highest hp)
@@ -604,7 +653,7 @@ export class Tower {
     for (let i = 0; i < chains; i++) {
       let best = null, bd = Infinity;
       for (const z of game.zombies) {
-        if (!z.alive || z.phased || hit.includes(z)) continue;
+        if (!z.alive || z.phased || z.skeleton || hit.includes(z)) continue;
         const dist = z.model.position.distanceTo(hit[hit.length - 1].model.position);
         if (dist <= 3.4 && dist < bd) { bd = dist; best = z; }
       }
@@ -628,6 +677,7 @@ export class Tower {
     const lvBonus = Math.round((d.incomeBase * 0.5) * (this.level - 1));
     const gain = d.incomeBase + lvBonus;
     game.money += gain;
+    this._farmEarned += gain; // total cumulé (affiché dans le panneau de la tour)
     // La ferme ne compte PAS dans les « pièces bankées » du save (anti-abuse
     // sur le quit/menu) — ses gains restent dans la monnaie de la partie.
     if (game.sfx) game.sfx.buy();
@@ -646,35 +696,66 @@ export class Tower {
     }
   }
 
-  // -- Nécromant (troupe) : ressuscite les monstres tués en SQUELETTES qui
-  //     sortent PRÈS DE LA BASE et marchent EN SENS INVERSE pour aller
-  //     au-devant des ennemis (barrière humaine sacrificielle).
+  // -- Nécromant (troupe) : tire des ÂMES qui blessent la horde.
+  //     Chaque monstre tué PAR SON PROPRE TIR (le coup de grâce d'une de ses
+  //     âmes) est ressuscité en SQUELETTE : il sort PRÈS DE LA BASE et marche
+  //     EN SENS INVERSE, et AU CONTACT d'un monstre il EXCHANGE LES PV (les
+  //     deux prennent les PV de l'autre — ni oneshot ni passage au travers).
   //     PV du squelette = % des PV du monstre source (20 % → 65 %).
   statNecroPct() {
     // Lv1 20 % → Lv5 65 % (progressif, 11,25 % / niveau)
     return 0.20 + (this.level - 1) * ((0.65 - 0.20) / 4);
   }
 
-  // Un monstre vient de mourir : c'est notre « matière première ».
-  // On retient la source (PV + type) pour la prochaine résurrection.
-  feedKill(maxHp, type) {
-    this._feed = { maxHp, type };
+  // S entre deux résurrections (8 s au Lv1 → 4 s au Lv5, min 2 s).
+  summonInterval() {
+    const d = this.def;
+    return Math.max(2, (d.summonEvery ?? 8) + (this.level - 1) * (d.upgrade.summon ?? 0));
+  }
+
+  // Crédit de kill : appelé par le projectile juste APRÈS son takeDamage —
+  // donc seule l'âme qui a porté le coup de grâce déclenche la résurrection
+  // (et chez CE nécromant, pas un autre).
+  onSoulKill(z) {
+    if (this.destroyed || z.alive) return; // toujours vivant (titan 2 vies…) → rien
+    const src = { maxHp: z.maxHp, type: z.type };
+    const now = this.game ? this.game.gameTime : 0;
+    if (now >= this.nextSummon) {
+      this.nextSummon = now + this.summonInterval() * 1000;
+      this._castVfx(now);
+      this.game.spawnSkeleton({ maxHp: src.maxHp, srcType: src.type, pct: this.statNecroPct() });
+    } else {
+      this._pending = src; // 1 squelette en attente max (le suivant remplace)
+    }
   }
 
   necroUpdate(dt, game, now) {
     this._restoreRing(now);
     if (this.frozen(now)) return;
     const d = this.def;
-    const interval = Math.max(2, d.cooldown + (this.level - 1) * (d.upgrade.cooldown ?? 0)) * 1000;
+    // 1) résurrection en attente : la fenêtre est-elle ouverte ?
+    if (this._pending && now >= this.nextSummon) {
+      const src = this._pending; this._pending = null;
+      this.nextSummon = now + this.summonInterval() * 1000;
+      this._castVfx(now);
+      game.spawnSkeleton({ maxHp: src.maxHp, srcType: src.type, pct: this.statNecroPct() });
+    }
+    // 2) tir : une âme vers la meilleure cible en portée (pas nos squelettes)
+    const target = this.acquireTarget(game);
+    if (!target) return;
+    aimTurret(this.model, target.model.position, 18);
+    const interval = this.statCooldown() * 1000;
     if (now < this.nextShot) return;
-    if (!this._feed) return; // pas de « cadavre » à ressusciter pour l'instant
-    // Il faut des ennemis vivants, sinon on stocke le squelette pour plus tard
-    const hasEnemy = game.zombies.some((z) => z.alive && !z.skeleton);
-    if (!hasEnemy) return;
-    const src = this._feed; this._feed = null; // consomme une résurrection
+    const from = this.muzzleWorldPos();
+    if (game.sfx) game.sfx.shoot('frost');
+    const dur = Math.max(0.08, (from.distanceTo(target.model.position) / (d.projectileSpeed || 24)) + 0.02);
+    game.spawnProjectile({
+      kind: d.projectile || 'soul', from, to: target.model.position.clone(),
+      target, damage: this.statDamage(), duration: dur,
+      source: this, onKill: (z) => this.onSoulKill(z),
+    });
+    this.lastShot = now;
     this.nextShot = now + interval;
-    this._castVfx(now);
-    game.spawnSkeleton({ maxHp: src.maxHp, srcType: src.type, pct: this.statNecroPct() });
   }
 
   _castVfx(now) {
@@ -699,7 +780,7 @@ export class Tower {
     const t = this.range;
     const cands = [];
     for (const z of game.zombies) {
-      if (!z.alive || z.phased) continue; // phased (wraith) can't be targeted
+      if (!z.alive || z.phased || z.skeleton) continue; // squelettes = notre troupe : intouchables
       const d = z.model.position.distanceTo(this.model.position);
       if (d <= t) cands.push(z);
     }
@@ -781,7 +862,9 @@ export class Tower {
     const interval = this.statCooldown() * 1000;
     if (now < this.nextShot) return;
     const from = this.muzzleWorldPos();
-    game.vfx.muzzleFlash(from);
+    // Minigun : PAS de flash par balle (70 tirs/s en ×6 = allocation en continu →
+    // lag) ; le recul de la tourelle porte déjà le visuel.
+    if (d.key !== 'gatling') game.vfx.muzzleFlash(from);
     if (game.sfx) game.sfx.shoot(d.projectile === 'tracer' ? 'shell' : 'bullet');
     this.lastShot = now;
     const dur = (from.distanceTo(target.model.position) / d.projectileSpeed) + 0.02;
@@ -809,6 +892,7 @@ export class Tower {
       kind: 'frost', from, to: target.model.position.clone(),
       target, damage: this.statDamage(), duration: dur,
       slowPct: this.statSlowPct(), slowDur: this.statSlowDur() * 1000,
+      atkSlowPct: this.statSlowPct(), // le gel ralentit AUSSI les capacités de la cible
     });
     this.lastShot = now;
     this.nextShot = now + interval;
@@ -819,7 +903,7 @@ export class Tower {
     if (frozen) return;
     let hitCount = 0;
     for (const z of game.zombies) {
-      if (!z.alive) continue;
+      if (!z.alive || z.skeleton) continue; // la flamme ne brûle pas nos squelettes
       if (z.model.position.distanceTo(this.model.position) <= this.range) {
         z.takeDamage(this.statDamage() * dt);
         hitCount++;
@@ -873,7 +957,7 @@ export class Tower {
     this.dead = true; // one-shot — removed from the field by the game loop
     const r = this.range;
     for (const z of game.zombies) {
-      if (!z.alive) continue;
+      if (!z.alive || z.skeleton) continue; // pas d'ami tir sur la troupe
       if (z.model.position.distanceTo(this.model.position) <= r) {
         z.takeDamage(this.statDamage());
       }
@@ -892,7 +976,7 @@ export class Tower {
 // PROJECTILE
 // ===========================================================================
 export class Projectile {
-  constructor({ kind, from, to, target, damage, duration, splash, mortar, critical, fireball, slowPct, slowDur }) {
+  constructor({ kind, from, to, target, damage, duration, splash, mortar, critical, fireball, slowPct, slowDur, atkSlowPct, source, onKill }) {
     this.kind = kind;
     this.from = from.clone();
     this.to = to.clone();
@@ -905,6 +989,9 @@ export class Projectile {
     this.fireball = fireball;
     this.slowPct = slowPct ?? 0;
     this.slowDur = slowDur ?? 1;
+    this.atkSlowPct = atkSlowPct ?? 0; // Frost : gel des capacités de la cible
+    this.source = source || null;      // tour qui a tiré (Nécromant : crédit de kill)
+    this.onKill = onKill || null;      // hook appelé APRÈS le dégât (peut tuer)
     this.t0 = null; // Point 10 : posé en horloge de jeu au 1er update (scalé)
     this.model = createProjectileModel(kind);
     this.model.position.copy(from);
@@ -930,16 +1017,16 @@ export class Projectile {
     const spl = this.splash;
 
     if (this.mortar) {
-      // splash damage all in radius
+      // splash damage all in radius (jamais nos squelettes)
       for (const z of game.zombies) {
-        if (!z.alive) continue;
+        if (!z.alive || z.skeleton) continue;
         if (z.model.position.distanceTo(at) <= spl) z.takeDamage(dmg);
       }
       game.vfx.explosion(at, 'big');
       game.shake(0.3);
     } else if (this.fireball) {
       for (const z of game.zombies) {
-        if (!z.alive) continue;
+        if (!z.alive || z.skeleton) continue;
         if (z.model.position.distanceTo(at) <= 2.2) z.takeDamage(dmg);
       }
       game.vfx.explosion(at, 'fire');
@@ -948,7 +1035,8 @@ export class Projectile {
     } else {
       if (this.target && this.target.alive) {
         this.target.takeDamage(dmg);
-        if (this.slowPct > 0) this.target.applySlow(this.slowPct, this.slowDur, game.gameTime);
+        if (this.slowPct > 0) this.target.applySlow(this.slowPct, this.slowDur, game.gameTime, this.atkSlowPct);
+        if (this.onKill) this.onKill(this.target); // Nécromant : crédit du coup de grâce
         game.vfx.damagePopup(at, dmg, this.critical);
       }
     }
@@ -970,7 +1058,7 @@ export class Projectile {
 function nearestZombie(game, point, maxD) {
   let best = null, bestD = maxD * maxD;
   for (const z of game.zombies) {
-    if (!z.alive) continue;
+    if (!z.alive || z.skeleton) continue; // pas de re-ciblage sur la troupe
     const d = z.model.position.distanceToSquared(point);
     if (d < bestD) { bestD = d; best = z; }
   }

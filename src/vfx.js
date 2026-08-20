@@ -171,6 +171,12 @@ export class VFX {
   }
 
   damagePopup(pos, value, crit) {
+    // Throttle : à 70 tirs/s (minigun ×6) les popups DOM se multiplient et
+    // font chuter le framerate. Les gros chiffres (crit / ≥25) passent toujours.
+    const nowMs = performance.now();
+    const big = !!crit || value >= 25;
+    if (!big && nowMs - (this._lastPopupAt || 0) < 70) return;
+    this._lastPopupAt = nowMs;
     const el = document.createElement('div');
     el.className = 'dmg-popup' + (crit ? ' dmg-crit' : '');
     el.textContent = Math.round(value);
@@ -281,6 +287,9 @@ export class VFX {
 
 function disposeObject(root) {
   root.traverse((o) => {
+    // Ressources partagées (prototypes de projectiles) : pas de dispose, elles
+    // vivent pour le compte de TOUTES les instances du même type.
+    if (o.userData && o.userData.shared) return;
     if (o.geometry) o.geometry.dispose();
     const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
     for (const m of mats) m.dispose && m.dispose();

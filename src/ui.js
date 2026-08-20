@@ -229,13 +229,19 @@ export class UI {
     else if (d.kind === 'slow') rows.push(['Slow', (tower.statSlowPct() * 100).toFixed(0) + '%', 'for ' + tower.statSlowDur().toFixed(1) + 's']);
     else if (d.kind === 'barricade') rows.push(['Intégrité (PV)', Math.max(0, Math.round(tower.hp)) + ' / ' + Math.round(tower.maxHp)]);
     else if (d.kind === 'necro') {
-      rows.push(['PV du squelette', Math.round(tower.statNecroPct() * 100) + ' % du monstre source']);
-      const itv = Math.max(2, d.cooldown + (tower.level - 1) * (d.upgrade.cooldown ?? 0));
-      rows.push(['Cadence', itv.toFixed(0) + ' s / squelette']);
+      rows.push(['Damage (âme)', tower.statDamage().toFixed(0)]);
+      rows.push(['PV du squelette', Math.round(tower.statNecroPct() * 100) + ' % du monstre tué']);
+      rows.push(['Réveil', tower.summonInterval().toFixed(1) + ' s entre squelettes']);
+    }
+    else if (d.kind === 'economy') {
+      const per = Math.max(3.5, d.tickEvery || 6);
+      const gain = d.incomeBase + Math.round((d.incomeBase * 0.5) * (tower.level - 1));
+      rows.push(['Revenu', gain + ' 🪙 / ' + per + ' s']);
+      if (tower._farmEarned > 0) rows.push(['Total gagné', Math.round(tower._farmEarned).toLocaleString('fr-FR') + ' 🪙']);
     }
     else rows.push(['Damage', tower.statDamage().toFixed(0)]);
-    if (d.range && d.kind !== 'necro') rows.push(['Range', tower.range.toFixed(1)]);
-    if (d.cooldown && d.kind !== 'necro') rows.push(['Rate', (1 / Math.max(0.01, tower.statCooldown())).toFixed(1) + '/s']);
+    if (d.range) rows.push(['Range', tower.range.toFixed(1)]);
+    if (d.cooldown) rows.push(['Rate', (1 / Math.max(0.01, tower.statCooldown())).toFixed(1) + '/s']);
     if (d.kind === 'mine') rows.push(['Blast radius', tower.range.toFixed(1)]);
     const up = tower.upgradeCost();
     rows.push(['Sell value', tower.sellValue() + 'g']);
@@ -1270,7 +1276,7 @@ const SHOP_TOWER_DESC = {
   gatling: 'Minigun à cadence folle — près de 12 impacts/s, un nuage de plomb très efficace en milieu de carte.',
   farm:   'Tour de trésorerie : rapporte des pièces toutes les 6 s. Elle ne se défend pas, placez-la en sécurité !',
   barricade: 'Palisade épineuse posée SUR le chemin : les zombies bloqués la grignotent (dégâts = leurs PV/s). Un mur bon marché pour gagner du temps !',
-  necro:   'Ressuscite les monstres en squelettes qui partent au-devant de la horde et se sacrifient (3 max posés).',
+  necro:   'Tire des âmes qui blessent la horde. Chaque monstre tué par SON TIR est ressuscité en squelette : il sort près de la base, va au-devant de la horde et échange ses PV au contact des monstres (3 max posées).',
 };
 
 const TOWER_DESC = {
@@ -1284,7 +1290,7 @@ const TOWER_DESC = {
   gatling: 'Minigun rotatif : environ 12 projectiles par seconde (≈ 38 dégâts/s) sur une moyenne portée. La reine des hordes — elle rafale jusqu\u2019au dernier zombie d\u2019un groupe.',
   farm:   'Économie pure : rapporte +7 pièces toutes les 6 s, et le rendement augmente à chaque niveau. Aucune attaque — construisez-la près de la maison, loin du chemin.',
   barricade: 'Palisade de bois épineux à poser DIRECTEMENT SUR le chemin. Les zombies qui s\u2019y heurtent restent bloqués et la « grignotent » (dégâts infligés = leurs propres PV / seconde) : un mur bon marché et solide pour arrêter la horde le temps que vos tours fassent leur travail. Améliorez-la pour énormément de PV. Jusqu’à 12 barrées posées à la fois.',
-  necro:   'Le Seigneur des Morts. À chaque monstre tué, le Nécromant le ressuscite en SQUELETTE près de votre base : le squelette marche en SENS INVERSE pour aller au-devant des ennemis et se sacrifie en barrière humaine (ses dégâts = ses PV). La force du squelette suit votre tour — 20 % des PV du monstre source au niveau 1, jusqu’à 65 % au niveau 5. Le rituel est lent (8 s, plus rapide en montant de niveau) et ne se déclenche que s’il reste des ennemis à repousser. Vous n’en poserez jamais plus de 3.',
+  necro:   'Le Seigneur des Morts. Il tire des ÂMES vertes qui blessent la horde comme n’importe quelle tour — et chaque monstre tué par SON PROPRE TIR est ressuscité en SQUELETTE près de votre base. Le squelette marche en SENS INVERSE pour aller au-devant des ennemis, et AU CONTACT d’un monstre il EXCHANGE LES PV : le monstre prend les PV du squelette, et le squelette encaisse les PV du monstre — les deux peuvent tomber dans le même échange. Ce n’est ni un oneshot (un squelette à 5 PV fait 5 dégâts) ni une barrière invincible. La force du squelette suit votre tour : 20 % des PV du monstre tué au niveau 1, jusqu’à 65 % au niveau 5. Le rituel est lent (8 s, plus rapide en montant de niveau) et ne se déclenche que s’il reste des ennemis à repousser. Vos tours, mines et éclairs ne visent jamais vos squelettes. Vous n’en poserez jamais plus de 3.',
 };
 
 const BOSS_ABILITY = {

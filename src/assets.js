@@ -31,6 +31,12 @@ function geoSphere(r, w = 12, h = 10) {
   if (!g) { g = new THREE.SphereGeometry(r, w, h); _geoCache.set(k, g); }
   return g;
 }
+function geoCone(r, h, seg = 10) {
+  const k = 'n' + r + ',' + h + ',' + seg;
+  let g = _geoCache.get(k);
+  if (!g) { g = new THREE.ConeGeometry(r, h, seg); _geoCache.set(k, g); }
+  return g;
+}
 
 function mat(color, opts = {}) {
   return new THREE.MeshStandardMaterial({ color, ...opts });
@@ -174,16 +180,18 @@ export function buildSkinDecor(id, scale = 1, big = false) {
     }
     const halo = cyl(0.78, 0.78, 0.14, ghost, 20); halo.position.y = -0.5; g.add(halo);
   } else if (id === 'magma') {
+    // Version sobre : socle charbonné + flaques de lave AU SOL + fissures au ras
+    // du socle. (Les sphères de lave flottantes d'avant posaient des « boules »
+    // en l'air autour des tours — jugées moches, supprimées.)
     const ped = box(1.9, 0.2, 1.9, emberM); ped.position.y = -0.48; g.add(ped);
+    const pool = cyl(0.5, 0.62, 0.07, lava, 14); pool.position.y = -0.37; g.add(pool);
     for (let i = 0; i < 4; i++) {
-      const cr = box(0.06, 0.5, 0.16, lava);
+      const cr = box(0.06, 0.4, 0.14, lava);
       const a = (i / 4) * Math.PI * 2 + 0.7;
-      cr.position.set(Math.cos(a) * 0.82, -0.05 + (i % 2) * 0.35, Math.sin(a) * 0.82);
+      cr.position.set(Math.cos(a) * 0.85, -0.28, Math.sin(a) * 0.85);
       cr.lookAt(0, cr.position.y, 0);
       g.add(cr);
     }
-    const em = sphere(0.14, lava); em.position.set(0.5, 1.35, -0.3); g.add(em);
-    const em2 = sphere(0.09, lava); em2.position.set(-0.45, 1.62, 0.35); g.add(em2);
   } else if (id === 'enchanted') {
     for (let i = 0; i < 5; i++) {
       const r = new THREE.Mesh(geoSphere(0.08), arcane.clone());
@@ -518,37 +526,35 @@ function towerBase(radius, height, color, opts = {}) {
 }
 
 // ---- Tour ÉLECTRO (chaîne d'électricité) : base sombre + bobine lumineuse --
+// ---- Tour ÉLECTRO (refaite) : vraie spire de Tesla, lisible et nette -------
+// (ancienne version : poteaux + boules éparses autour, jugée moche)
 function towerShock() {
   const model = new THREE.Group();
   model.name = 'tower-shock';
-  const root = box(1.3, 0.5, 1.3, mat(0x2c3240, { metalness: 0.7, roughness: 0.35 }));
-  root.position.y = 0.3;
-  model.add(root);
-  const post = cyl(0.18, 0.26, 0.9, mat(0x4a5266, { metalness: 0.6, roughness: 0.4 }), 10);
-  post.position.y = 0.9;
-  model.add(post);
-  // bobine (spire de Tesla) : sphère + anneau + filament émissif
-  const coilMat = mat(0x7ef5e6, { emissive: 0x39ffd8, emissiveIntensity: 1.5, metalness: 0.4 });
-  const orb = sphere(0.26, coilMat);
-  orb.position.y = 1.62; model.add(orb);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.045, 8, 24), mat(0x9aa7bd, { metalness: 0.8, roughness: 0.3 }));
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 1.4; model.add(ring);
-  // arcs latéraux
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2 + 0.6;
-    const rod = cyl(0.03, 0.05, 0.5, coilMat, 8);
-    rod.position.set(Math.cos(a) * 0.42, 1.3, Math.sin(a) * 0.42);
-    rod.rotation.z = -Math.cos(a) * 0.9;
-    model.add(rod);
+  // socle hexagonal sombre
+  const plinth = cyl(0.88, 1.02, 0.32, mat(0x232a38, { metalness: 0.6, roughness: 0.5 }), 6);
+  plinth.position.y = 0.16; model.add(plinth);
+  // colonne de bobine en cuivre (cylindre conique, lisse)
+  const body = cyl(0.32, 0.46, 1.1, mat(0x8a5a2b, { metalness: 0.8, roughness: 0.35 }), 16);
+  body.position.y = 0.88; model.add(body);
+  // enroulements : bandes émissives régulières tout le long de la bobine
+  const bandMat = mat(0x7ef5e6, { emissive: 0x39ffd8, emissiveIntensity: 1.1, metalness: 0.4 });
+  for (let i = 0; i < 5; i++) {
+    const k = i / 4;
+    const band = cyl(0.335 - k * 0.005, 0.475 - k * 0.03, 0.07, bandMat, 16);
+    band.position.y = 0.52 + i * 0.225;
+    model.add(band);
   }
-  const sparkLight = new THREE.PointLight(0x66ffe8, 1.4, 5, 2);
-  sparkLight.position.y = 1.7; sparkLight.name = 'spark';
+  // top-load toroïde en laiton (la « tête » de Tesla) + noyau émissif
+  const top = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.12, 10, 24), mat(0xc9a24a, { metalness: 1.0, roughness: 0.28 }));
+  top.rotation.x = Math.PI / 2;
+  top.position.y = 1.58; model.add(top);
+  const core = sphere(0.17, bandMat);
+  core.position.y = 1.58; model.add(core);
+  const sparkLight = new THREE.PointLight(0x66ffe8, 1.1, 5, 2);
+  sparkLight.position.y = 1.8; sparkLight.name = 'spark';
   model.add(sparkLight);
-  // petite couronne de base
-  const crown = cyl(0.62, 0.78, 0.34, mat(0x232935, { metalness: 0.5 }), 12);
-  crown.position.y = -0.02; model.add(crown);
-  model.userData.parts = { root, post, orb };
+  model.userData.parts = { body, top, core, muzzle: core };
   return model;
 }
 
@@ -622,40 +628,30 @@ function towerFarm() {
   return model;
 }
 
-// ---- Barricade (posée sur le chemin) : palissades en bois + piques --------
+// ---- Barricade (refaite, posée sur le chemin) : palisade de piquets pointus
+// Les piquets sont alignés sur l'axe local X : la tour est tournée à la
+// construction pour être PERPENDICULAIRE au chemin (Tower constructor).
 function towerBarricade() {
   const model = new THREE.Group();
   model.name = 'tower-barricade';
   const wood = mat(0x8a6b45, { roughness: 0.85 });
   const woodDark = mat(0x6d5236, { roughness: 0.9 });
-  const spikeMat = mat(0xaab4c4, { metalness: 0.8, roughness: 0.28 });
-  // socle (2 rangées de planches empilées)
-  for (let i = 0; i < 2; i++) {
-    const p = new THREE.Mesh(geoBox(1.9, 0.4, 1.0), i ? wood : woodDark);
-    p.position.y = 0.2 + i * 0.42;
-    model.add(p);
+  // madrier de base (pose au sol)
+  const baseLog = new THREE.Mesh(geoBox(2.1, 0.22, 0.34), woodDark);
+  baseLog.position.y = 0.11; model.add(baseLog);
+  // 5 piquets verticaux pointus (tronc cylindrique + pointe conique)
+  for (let i = 0; i < 5; i++) {
+    const sx = -0.84 + i * 0.42;
+    const stake = new THREE.Mesh(geoCyl(0.075, 0.095, 1.15, 8), i % 2 ? woodDark : wood);
+    stake.position.set(sx, 0.72, 0); model.add(stake);
+    const tip = new THREE.Mesh(geoCone(0.085, 0.3, 8), i % 2 ? wood : woodDark);
+    tip.position.set(sx, 1.57, 0); model.add(tip);
   }
-  // poteaux verticaux latéraux
-  const postGeo = geoCyl(0.09, 0.11, 1.2, 8);
-  for (const sx of [-0.8, 0.8]) {
-    const post = new THREE.Mesh(postGeo, woodDark);
-    post.position.set(sx, 0.62, 0);
-    model.add(post);
-  }
-  // piques métalliques vers le haut (piégent la horde)
-  const spikes = [[-0.4, 0.2, 0.7], [0.4, -0.2, 0.8], [0, 0.1, 1.0], [-0.25, -0.2, 0.6], [0.25, 0.22, 0.65]];
-  for (const [sx, sz, h] of spikes) {
-    const spike = new THREE.Mesh(geoCyl(0.018, 0.075, h, 6), spikeMat);
-    spike.position.set(sx, 1.0 + h / 2, sz);
-    model.add(spike);
-  }
-  // petites barres de renfort croisées
-  for (const ang of [0.6, -0.6]) {
-    const bar = new THREE.Mesh(geoBox(0.12, 1.1, 0.08), wood);
-    bar.rotation.z = ang;
-    bar.position.y = 0.6;
-    model.add(bar);
-  }
+  // 2 planches horizontales qui traversent les piquets (légèrement décalées)
+  const plank1 = new THREE.Mesh(geoBox(2.0, 0.16, 0.09), wood);
+  plank1.position.set(0, 0.45, 0.03); model.add(plank1);
+  const plank2 = new THREE.Mesh(geoBox(2.0, 0.16, 0.09), woodDark);
+  plank2.position.set(0, 0.88, -0.03); model.add(plank2);
   model.userData.parts = {};
   return model;
 }
@@ -706,7 +702,8 @@ function towerNecro() {
   // lumière verte
   const glow = new THREE.PointLight(0x7aff5a, 1.3, 5, 2);
   glow.position.y = 1.4; model.add(glow);
-  model.userData.parts = { skull, ring };
+  // muzzle = le crâne flottant : les âmes partent de sa bouche
+  model.userData.parts = { skull, ring, muzzle: skull };
   return model;
 }
 
@@ -2068,7 +2065,13 @@ function propSign() {
 // PROJECTILES & EXPLOSIONS
 // ---------------------------------------------------------------------------
 
-export function createProjectileModel(kind = 'bullet') {
+// -- Projiles : prototypes PARTAGÉS -------------------------------------------
+// Chaque kind est construit UNE fois (prototype) ; les tirs en font des
+// clones qui PARTAGENT géométrie + matériaux. Le Minigun tire 70 tirs/s en ×6 :
+// sans ça, chaque balle allouait sa géométrie + son matériau (lag + GC).
+const _projProtos = new Map();
+
+function buildProjectileProto(kind) {
   const model = new THREE.Group();
   switch (kind) {
     case 'tracer': {
@@ -2111,6 +2114,16 @@ export function createProjectileModel(kind = 'bullet') {
       // no point light (see frost note) — emissive core carries the glow
       break;
     }
+    case 'soul': {
+      model.name = 'proj-soul';
+      const core = sphere(0.13, mat(0xbaffb0, { emissive: 0x3aff2a, emissiveIntensity: 2.2, transparent: true, opacity: 0.95 }), 12, 10);
+      model.add(core);
+      const tail = cyl(0.03, 0.06, 0.36, mat(0x8dff7a, { transparent: true, opacity: 0.4, emissive: 0x3aff2a, emissiveIntensity: 1.4 }), 8);
+      tail.rotation.x = Math.PI / 2;
+      tail.position.z = -0.24;
+      model.add(tail);
+      break;
+    }
     default: {
       model.name = 'proj-bullet';
       const body = cyl(0.04, 0.04, 0.16, mat(0xd8c060, { metalness: 0.9, roughness: 0.2 }), 8);
@@ -2119,6 +2132,14 @@ export function createProjectileModel(kind = 'bullet') {
       break;
     }
   }
+  model.traverse((o) => { o.userData.shared = true; });
+  return model;
+}
+
+export function createProjectileModel(kind = 'bullet') {
+  if (!_projProtos.has(kind)) _projProtos.set(kind, buildProjectileProto(kind));
+  const model = _projProtos.get(kind).clone();
+  model.traverse((o) => { o.userData.shared = true; });
   return model;
 }
 

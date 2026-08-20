@@ -455,7 +455,7 @@ icades, squelettes, horloge…). Le **build de production doit rester propre** (
 
 ---
 
-## 🚀 Release v0.1.2
+## 🚀 Release v0.1.1
 
 > **Version corrections + redesign Nécromant** : le Nécromant **tire de vraies âmes** (un squelette ne naît que si **SON âme** tue), les squelettes font un **échange de PV mutuel** au contact des zombies, et **10 bugs** signalés sont corrigés (friendly fire, modèles 3D, décor de carte, particules gelées, lag Minigun, volcan sur le chemin, gel d'attaque du Frost…). Le tout **testé** : 9/9 scénarios Puppeteer + régressions (smoke, speed ×1/×4/×6, features, progress.json), zéro erreur console.
 

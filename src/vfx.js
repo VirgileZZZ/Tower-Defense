@@ -3,6 +3,16 @@ import { CONFIG } from './config.js';
 import { createExplosionModel, createIceMistRing, createMuzzleFlashModel } from './assets.js';
 import { animateExplosion } from './animation.js';
 
+// Petites géométries VFX en cache partagé : l'upload GPU n'a lieu qu'à la
+// première occurrence de chaque forme (pas un upload par effet).
+const _vfxGeo = new Map();
+const _q2 = (v) => Math.round(v * 100) / 100;
+function vfxGeo(key, make) {
+  let g = _vfxGeo.get(key);
+  if (!g) { g = make(); g.userData.shared = true; _vfxGeo.set(key, g); }
+  return g;
+}
+
 // ---------------------------------------------------------------------------
 // VFX — transient world effects (Three.js) + DOM-projected overlays (damage
 // numbers, per-zombie HP bars, base-hit vignette).
@@ -66,7 +76,7 @@ export class VFX {
 
   // Generic expanding colored ring (ability VFX: sprint, regen, phase, petrify).
   ring(pos, color, radius = 3) {
-    const geo = new THREE.RingGeometry(radius * 0.9, radius, 40);
+    const geo = vfxGeo('ring' + _q2(radius * 0.9) + ',' + _q2(radius), () => new THREE.RingGeometry(radius * 0.9, radius, 40));
     const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
     const r = new THREE.Mesh(geo, m);
     r.rotation.x = -Math.PI / 2;
@@ -81,7 +91,7 @@ export class VFX {
   // Nécromant : le minion sort de sous terre — onde de choc terre + bourgeons de terre
   earthSpawn(pos) {
     const y = CONFIG.pathHeight ?? 0;
-    const geo = new THREE.RingGeometry(0.9, 1.25, 28);
+    const geo = vfxGeo('earth', () => new THREE.RingGeometry(0.9, 1.25, 28));
     const m = new THREE.MeshBasicMaterial({ color: 0x8a6a3a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
     const r = new THREE.Mesh(geo, m);
     r.rotation.x = -Math.PI / 2;
@@ -122,7 +132,7 @@ export class VFX {
   flameStream(pos, intensity, range) {
     if (!this.flame) {
       const m = new THREE.Mesh(
-        new THREE.SphereGeometry(0.5, 10, 8),
+        vfxGeo('flame', () => new THREE.SphereGeometry(0.5, 10, 8)),
         new THREE.MeshBasicMaterial({ color: 0xff7a2a, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })
       );
       this.scene.add(m);
@@ -158,7 +168,8 @@ export class VFX {
     const matl = new THREE.LineBasicMaterial({ color: 0xa8fff4, transparent: true, opacity: 0.95 });
     const line = new THREE.Line(geo, matl);
     this.scene.add(line);
-    this.addEffect(line, 150, (o, k) => { o.material.opacity = Math.max(0, 0.95 * (1 - k)); o.scale.setScalar(1 + k * 0.5); });
+    // dur en SECONDES (addEffect ×1000) — 0.15 s, pas 150 s !
+    this.addEffect(line, 0.15, (o, k) => { o.material.opacity = Math.max(0, 0.95 * (1 - k)); o.scale.setScalar(1 + k * 0.5); });
   }
 
   // 🪙 flottant de la Ferme (+N pièces)
@@ -290,7 +301,8 @@ function disposeObject(root) {
     // Ressources partagées (prototypes de projectiles) : pas de dispose, elles
     // vivent pour le compte de TOUTES les instances du même type.
     if (o.userData && o.userData.shared) return;
-    if (o.geometry) o.geometry.dispose();
+    // Géométries en cache partagé : jamais disposées (réutilisées ailleurs).
+    if (o.geometry && !(o.geometry.userData && o.geometry.userData.shared)) o.geometry.dispose();
     const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
     for (const m of mats) m.dispose && m.dispose();
   });

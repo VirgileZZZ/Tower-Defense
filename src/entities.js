@@ -268,7 +268,12 @@ export class Zombie {
     // reached the base (sens normal) — ou le point de spawn (squelette, sens
     // inverse : il a fait son office de barrière humaine, on le retire sans dégât)
     if (this.reverse) {
-      if (this.progress <= 0) { this.progress = 0; this.reachedStart = true; }
+      if (this.progress <= 0) {
+        this.progress = 0;
+        this.reachedStart = true;
+        // la « barrière » a fini son rôle : elle se dissolve dans l'ombre
+        if (game.vfx) game.vfx.ring(this.model.position, 0x66ff88, 1.4);
+      }
     } else if (this.progress >= 1) {
       this.progress = 1;
       this.reachedBase = true;
@@ -1067,7 +1072,9 @@ function nearestZombie(game, point, maxD) {
 
 function disposeObject(root) {
   root.traverse((o) => {
-    if (o.geometry) o.geometry.dispose();
+    // Géométries en cache partagé (tours, zombies, décor) : jamais disposées,
+    // elles sont réutilisées par toutes les autres instances du même modèle.
+    if (o.geometry && !(o.geometry.userData && o.geometry.userData.shared)) o.geometry.dispose();
     const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
     for (const m of mats) m.dispose && m.dispose();
   });

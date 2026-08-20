@@ -6,6 +6,7 @@ import { loadSave, loadProgressFromFile, persistSave } from './save.js';
 import { Path } from './path.js';
 import { CONFIG, terrainHeight, DIFFICULTIES } from './config.js';
 import { Game } from './game.js';
+import { LightPad } from './lightpad.js';
 import { UI } from './ui.js';
 import { VFX } from './vfx.js';
 import { Input } from './input.js';
@@ -23,6 +24,10 @@ scene.background = new THREE.Color(theme0.sky);
 scene.fog = new THREE.Fog(theme0.sky, theme0.fog[0], theme0.fog[1]);
 const camera = createCamera();
 createLights(scene);
+// Pool de lumières "lestes" : garde le nombre de PointLight visibles constant
+// → les shaders standard ne sont JAMAIS recompilés à l'exécution (sinon :
+// saccade à la pose des tours, à l'apparition des boss, au changement de thème).
+const lightPad = new LightPad(scene, 28);
 scene.add(createGround(CONFIG.groundSize));
 scene.add(createPathRibbon(CONFIG.waypoints, 2.6, 0xd2a560, CONFIG.pathHeight, 0x3d4a36));
 
@@ -56,6 +61,7 @@ game.vfx = vfx;
 
 const input = new Input({ game, camera, domElement: renderer.domElement });
 game.input = input;
+game.lightPad = lightPad;
 
 // Initial scenery (theme 0). Re-scattered per theme in game.applyTheme.
 game.scatterProps(theme0.props || CONFIG.defaultProps);
@@ -70,6 +76,11 @@ controls.target.set(0, 0.8, 0);
 game.controls = controls;
 
 onResize(renderer, camera);
+// Pré-compile tous les shaders AVANT la 1ère image (tours, peaux, zombies,
+// boss, décor, munitions, VFX) → plus aucun freeze de compilation pendant
+// la partie (ex : à la pose des premières tours).
+lightPad.update();
+game._warmupShaders();
 game.init();
 window.__game = game; // debug/inspection handle
 window.__CONFIG = CONFIG;
@@ -105,6 +116,7 @@ function loop(now) {
   // no auto-rotating camera (user requested it removed)
 
   controls.update();
+  lightPad.update(); // total de point lights constant → 0 recompile shader
   renderer.render(scene, camera);
 }
 requestAnimationFrame(loop);

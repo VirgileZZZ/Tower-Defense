@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CONFIG, terrainHeight } from './config.js';
-import { createRangeCircle } from './assets.js';
+import { createRangeCircle, rangeCircleGeo } from './assets.js';
 
 // ---------------------------------------------------------------------------
 // Input — mouse (raycast → ghost placement / tower selection) + keyboard.
@@ -71,8 +71,8 @@ export class Input {
     const r = g.towerRangeForType(g.selectedType);
     if (this._ghostR !== r) {
       this._ghostR = r;
-      this.ghostRing.geometry.dispose();
-      this.ghostRing.geometry = new THREE.RingGeometry(r * 0.985, r, 48);
+      // géométries en cache partagé : on change la référence, on ne dispose rien
+      this.ghostRing.geometry = rangeCircleGeo(r);
     }
     this.ghostRing.position.set(x, terrainHeight(x, z) + 0.05, z);
     this.ghost.marker.visible = true;

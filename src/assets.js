@@ -12,30 +12,65 @@ const rand = (a, b) => a + Math.random() * (b - a);
 // Geometry cache: identical primitive shapes are shared (avoids re-allocating
 // buffers on every model/projectile/explosion spawn — the main source of the
 // one-frame hitches when towers fire or props are placed).
+// NB: clés quantifiées (2 décimales) pour que les tailles aléatoires
+// (rochers, herbes…) restent bornées (~10 variantes max par forme).
 const _geoCache = new Map();
-function geoBox(w, h, d) {
-  const k = 'b' + w + ',' + h + ',' + d;
-  let g = _geoCache.get(k);
-  if (!g) { g = new THREE.BoxGeometry(w, h, d); _geoCache.set(k, g); }
+const q2 = (v) => Math.round(v * 100) / 100;
+function _cached(key, make) {
+  let g = _geoCache.get(key);
+  if (!g) { g = make(); g.userData.shared = true; _geoCache.set(key, g); }
   return g;
 }
-function geoCyl(rTop, rBot, h, seg = 12) {
-  const k = 'c' + rTop + ',' + rBot + ',' + h + ',' + seg;
-  let g = _geoCache.get(k);
-  if (!g) { g = new THREE.CylinderGeometry(rTop, rBot, h, seg); _geoCache.set(k, g); }
-  return g;
+function geoBox(w, h, d) {
+  return _cached('b' + [w, h, d].map(q2), () => new THREE.BoxGeometry(w, h, d));
+}
+function geoCyl(rTop, rBot, h, seg = 12, openEnded = false) {
+  return _cached('c' + [rTop, rBot, h].map(q2) + ',' + seg + (openEnded ? ',o' : ''),
+    () => new THREE.CylinderGeometry(rTop, rBot, h, seg, 1, openEnded));
 }
 function geoSphere(r, w = 12, h = 10) {
-  const k = 's' + r + ',' + w + ',' + h;
-  let g = _geoCache.get(k);
-  if (!g) { g = new THREE.SphereGeometry(r, w, h); _geoCache.set(k, g); }
-  return g;
+  return _cached('s' + q2(r) + ',' + w + ',' + h, () => new THREE.SphereGeometry(r, w, h));
 }
-function geoCone(r, h, seg = 10) {
-  const k = 'n' + r + ',' + h + ',' + seg;
-  let g = _geoCache.get(k);
-  if (!g) { g = new THREE.ConeGeometry(r, h, seg); _geoCache.set(k, g); }
-  return g;
+function geoSphereHalf(r, w = 12, h = 10) {
+  return _cached('sh' + q2(r) + ',' + w + ',' + h,
+    () => new THREE.SphereGeometry(r, w, h, 0, Math.PI * 2, 0, Math.PI / 2));
+}
+function geoCone(r, h, seg = 10, openEnded = false) {
+  return _cached('n' + [r, h].map(q2) + ',' + seg + (openEnded ? ',o' : ''),
+    () => new THREE.ConeGeometry(r, h, seg, 1, openEnded));
+}
+function geoTorus(r, tube, radSeg = 8, tubSeg = 24) {
+  return _cached('t' + [r, tube].map(q2) + ',' + radSeg + ',' + tubSeg,
+    () => new THREE.TorusGeometry(r, tube, radSeg, tubSeg));
+}
+function geoIcos(r, det = 0) {
+  return _cached('i' + q2(r) + ',' + det, () => new THREE.IcosahedronGeometry(r, det));
+}
+function geoOcta(r, det = 0) {
+  return _cached('o' + q2(r) + ',' + det, () => new THREE.OctahedronGeometry(r, det));
+}
+function geoDodeca(r, det = 0) {
+  return _cached('d' + q2(r) + ',' + det, () => new THREE.DodecahedronGeometry(r, det));
+}
+function geoRing(inner, outer, seg = 32) {
+  return _cached('r' + [inner, outer].map(q2) + ',' + seg, () => new THREE.RingGeometry(inner, outer, seg));
+}
+function geoPlane(w, h) {
+  return _cached('p' + [w, h].map(q2), () => new THREE.PlaneGeometry(w, h));
+}
+function geoCylHalf(rTop, rBot, h, seg = 12) {
+  return _cached('ch' + [rTop, rBot, h].map(q2) + ',' + seg,
+    () => new THREE.CylinderGeometry(rTop, rBot, h, seg, 1, false, 0, Math.PI));
+}
+function geoCircle(r, seg = 24, thetaStart = 0, thetaLength = Math.PI * 2) {
+  return _cached('ci' + q2(r) + ',' + seg + ',' + q2(thetaStart) + ',' + q2(thetaLength),
+    () => new THREE.CircleGeometry(r, seg, thetaStart, thetaLength));
+}
+function cone(r, h, seg, material, openEnded = false) {
+  const m = new THREE.Mesh(geoCone(r, h, seg, openEnded), material);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
 }
 
 function mat(color, opts = {}) {
@@ -58,6 +93,12 @@ function cyl(rTop, rBot, h, material, seg = 12) {
 
 function sphere(r, material, w = 12, h = 10) {
   const m = new THREE.Mesh(geoSphere(r, w, h), material);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+function torus(r, tube, material, radSeg = 8, tubSeg = 24) {
+  const m = new THREE.Mesh(geoTorus(r, tube, radSeg, tubSeg), material);
   m.castShadow = true;
   m.receiveShadow = true;
   return m;
@@ -211,7 +252,7 @@ export function buildSkinDecor(id, scale = 1, big = false) {
     }
     const peak = cyl(0.03, 0.26, 0.7, ice, 6); peak.position.y = 1.35; g.add(peak);
   } else if (id === 'haunted') {
-    const mist = new THREE.Mesh(new THREE.CircleGeometry(1.0, 24), spect.clone());
+    const mist = new THREE.Mesh(geoCircle(1.0, 24), spect.clone());
     mist.material.side = THREE.DoubleSide;
     mist.rotation.x = -Math.PI / 2; mist.position.y = -0.52; g.add(mist);
     for (let i = 0; i < 3; i++) {
@@ -250,21 +291,21 @@ function buildBaseSkinDecor(id) {
       g.add(p);
     }
     // Cercle magique gravé au sol
-    const ring = new THREE.Mesh(new THREE.RingGeometry(2.6, 3.0, 40),
+    const ring = new THREE.Mesh(geoRing(2.6, 3.0, 40),
       mat(0xb07aff, { emissive: 0xb07aff, emissiveIntensity: 1.6, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; g.add(ring);
-    const ring2 = new THREE.Mesh(new THREE.RingGeometry(2.0, 2.12, 40),
+    const ring2 = new THREE.Mesh(geoRing(2.0, 2.12, 40),
       mat(0xb07aff, { emissive: 0xb07aff, emissiveIntensity: 1.1, transparent: true, opacity: 0.45, side: THREE.DoubleSide }));
     ring2.rotation.x = -Math.PI / 2; ring2.position.y = 0.05; g.add(ring2);
     // Reliquaire cristallin sur le faîtage
-    const c1 = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), rune);
+    const c1 = new THREE.Mesh(geoOcta(0.42, 0), rune);
     c1.position.set(0, 4.8, 0); g.add(c1);
-    const c2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), rune);
+    const c2 = new THREE.Mesh(geoOcta(0.2, 0), rune);
     c2.position.set(0.5, 4.25, 0.3); g.add(c2);
     // Runes en lévitation autour de la demeure
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + 0.8;
-      const r = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), rune);
+      const r = new THREE.Mesh(geoOcta(0.14, 0), rune);
       r.position.set(Math.cos(a) * 3.0, 2.3 + (i % 3) * 0.6, Math.sin(a) * 3.0);
       g.add(r);
     }
@@ -282,20 +323,20 @@ function buildBaseSkinDecor(id) {
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * Math.PI * 2 + 0.3;
       const h = rand(1.6, 3.6);
-      const s = new THREE.Mesh(new THREE.ConeGeometry(rand(0.25, 0.5), h, 5), i % 2 ? ice : ice2);
+      const s = new THREE.Mesh(geoCone(rand(0.25, 0.5), h, 5), i % 2 ? ice : ice2);
       s.position.set(Math.cos(a) * rand(3.8, 4.8), h / 2 + 0.1, Math.sin(a) * rand(3.8, 4.8));
       s.rotation.z = rand(-0.25, 0.25);
       g.add(s);
     }
     // Gros cristal royal sur le toit
-    const big = new THREE.Mesh(new THREE.OctahedronGeometry(0.75, 0), ice2);
+    const big = new THREE.Mesh(geoOcta(0.75, 0), ice2);
     big.position.set(0, 4.6, 0); big.rotation.y = 0.6; g.add(big);
-    const b2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), ice);
+    const b2 = new THREE.Mesh(geoOcta(0.34, 0), ice);
     b2.position.set(-0.7, 4.1, -0.4); g.add(b2);
     // Cristaux épars dans la cour
     for (let i = 0; i < 5; i++) {
       const a = rand(0, Math.PI * 2);
-      const c = new THREE.Mesh(new THREE.OctahedronGeometry(rand(0.12, 0.22), 0), ice);
+      const c = new THREE.Mesh(geoOcta(rand(0.12, 0.22), 0), ice);
       c.position.set(Math.cos(a) * rand(2.3, 3.4), 0.15, Math.sin(a) * rand(2.3, 3.4));
       g.add(c);
     }
@@ -328,7 +369,7 @@ function buildBaseSkinDecor(id) {
       g.add(w);
     }
     // Brume verte basse
-    const fog = new THREE.Mesh(new THREE.CircleGeometry(5.8, 28),
+    const fog = new THREE.Mesh(geoCircle(5.8, 28),
       mat(0x4aff8a, { emissive: 0x2a8a5a, emissiveIntensity: 0.5, transparent: true, opacity: 0.16, side: THREE.DoubleSide }));
     fog.rotation.x = -Math.PI / 2; fog.position.y = 0.12; g.add(fog);
     // Grande lanterne courbée
@@ -478,7 +519,7 @@ export function createZombieModel(type = 'walker', skin = 'default') {
   if (sk.crystals) {
     const crys = mat(0xcfe8ff, { emissive: 0x8ac0ff, emissiveIntensity: 0.4, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0.3 });
     for (let i = 0; i < 6; i++) {
-      const c = new THREE.Mesh(new THREE.ConeGeometry(0.04, rand(0.1, 0.2), 4), crys);
+      const c = new THREE.Mesh(geoCone(0.04, rand(0.1, 0.2), 4), crys);
       c.position.set(rand(-0.25, 0.25), rand(1.1, 1.8), rand(-0.15, 0.15));
       c.rotation.set(rand(-0.4, 0.4), 0, rand(-0.4, 0.4));
       root.add(c);
@@ -546,7 +587,7 @@ function towerShock() {
     model.add(band);
   }
   // top-load toroïde en laiton (la « tête » de Tesla) + noyau émissif
-  const top = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.12, 10, 24), mat(0xc9a24a, { metalness: 1.0, roughness: 0.28 }));
+  const top = new THREE.Mesh(geoTorus(0.36, 0.12, 10, 24), mat(0xc9a24a, { metalness: 1.0, roughness: 0.28 }));
   top.rotation.x = Math.PI / 2;
   top.position.y = 1.58; model.add(top);
   const core = sphere(0.17, bandMat);
@@ -620,7 +661,7 @@ function towerFarm() {
   bucket.position.set(-1.15, 0.5, 0.9); model.add(bucket);
   // panais
   for (let i = 0; i < 3; i++) {
-    const car = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 8), mat(0xe8693a, { roughness: 0.6 }));
+    const car = new THREE.Mesh(geoCone(0.07, 0.24, 8), mat(0xe8693a, { roughness: 0.6 }));
     car.position.set(-1.15 + i * 0.16, 0.62, 0.9); car.rotation.z = Math.PI / 2; model.add(car);
   }
   const glow = new THREE.PointLight(0xffd76a, 0.5, 3.4, 2);
@@ -669,7 +710,7 @@ function towerNecro() {
   const slab = cyl(0.7, 0.85, 0.28, stone, 8);
   slab.position.y = 0.58; model.add(slab);
   // cercle runique émissif au sol
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 8, 28), soulMat);
+  const ring = new THREE.Mesh(geoTorus(0.55, 0.05, 8, 28), soulMat);
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 0.74; model.add(ring);
   // crâne flottant (sphère + orbite oculaires + mâchoire)
@@ -682,7 +723,7 @@ function towerNecro() {
   jaw.position.set(0, -0.24, 0.12); skull.add(jaw);
   // dents
   for (let i = 0; i < 5; i++) {
-    const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.1, 5), mat(0xe8e2d0));
+    const tooth = new THREE.Mesh(geoCone(0.03, 0.1, 5), mat(0xe8e2d0));
     tooth.position.set(-0.14 + i * 0.07, -0.14, 0.26);
     tooth.rotation.x = Math.PI;
     skull.add(tooth);
@@ -813,13 +854,13 @@ function towerFrost() {
     emissive: 0x5aa8ff, emissiveIntensity: 0.8,
     transparent: true, opacity: 0.8, roughness: 0.1, metalness: 0.4,
   });
-  const crystal = new THREE.Mesh(new THREE.IcosahedronGeometry(0.34, 0), crystalMat);
+  const crystal = new THREE.Mesh(geoIcos(0.34, 0), crystalMat);
   crystal.position.y = 0.42;
   crystal.name = 'crystal';
   crystal.castShadow = true;
   turret.add(crystal);
   for (let i = 0; i < 4; i++) {
-    const shard = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 5), crystalMat);
+    const shard = new THREE.Mesh(geoCone(0.07, 0.3, 5), crystalMat);
     const a = (i / 4) * Math.PI * 2;
     shard.position.set(Math.cos(a) * 0.3, 0.28, Math.sin(a) * 0.3);
     shard.rotation.z = Math.cos(a) * 0.5;
@@ -925,7 +966,7 @@ function towerMine() {
   const spikesMat = mat(0x555c50, { metalness: 0.6, roughness: 0.4 });
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
-    const sp = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 4), spikesMat);
+    const sp = new THREE.Mesh(geoCone(0.05, 0.14, 4), spikesMat);
     sp.position.set(Math.cos(a) * 0.32, 0.2, Math.sin(a) * 0.32);
     sp.rotation.z = Math.cos(a) * 1.1;
     sp.rotation.x = -Math.sin(a) * 1.1;
@@ -982,7 +1023,7 @@ export function createBaseModel() {
   model.add(skirt);
 
   // --- roof (4-sided hipped) + eaves + ridge ---
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(2.9, 1.5, 4), roofMat);
+  const roof = new THREE.Mesh(geoCone(2.9, 1.5, 4), roofMat);
   roof.position.y = 3.15;
   roof.rotation.y = Math.PI / 4;
   roof.castShadow = true;
@@ -1079,7 +1120,7 @@ export function createBaseModel() {
   const barrel = cyl(0.28, 0.24, 0.5, mat(0x5a4433, { roughness: 1 }), 10); barrel.position.set(-2.4, 0.25, 1.6); model.add(barrel);
   // a bush in the yard
   const ybushMat = mat(0x446a3a, { roughness: 1 });
-  for (let i = 0; i < 3; i++) { const yb = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.2, 0.3), 0), ybushMat); yb.position.set(2.3, 0.25, 1.8 + (i - 1) * 0.25); yb.castShadow = true; model.add(yb); }
+  for (let i = 0; i < 3; i++) { const yb = new THREE.Mesh(geoIcos(rand(0.2, 0.3), 0), ybushMat); yb.position.set(2.3, 0.25, 1.8 + (i - 1) * 0.25); yb.castShadow = true; model.add(yb); }
   // mailbox
   const mb = cyl(0.04, 0.04, 1.0, mat(0x3a3f45), 8); mb.position.set(3.2, 0.5, 1.2); model.add(mb);
   const mbx = box(0.3, 0.2, 0.2, mat(0x4a6a8a, { metalness: 0.4, roughness: 0.5 })); mbx.position.set(3.2, 1.05, 1.2); model.add(mbx);
@@ -1112,7 +1153,7 @@ function bossGolem() {
   const stone2 = mat(0x565c64, { roughness: 1 });
   // rocky plating over torso + limbs
   for (let i = 0; i < 12; i++) {
-    const s = new THREE.Mesh(new THREE.DodecahedronGeometry(rand(0.14, 0.3), 0), i % 2 ? stone : stone2);
+    const s = new THREE.Mesh(geoDodeca(rand(0.14, 0.3), 0), i % 2 ? stone : stone2);
     s.position.set(rand(-0.4, 0.4), rand(0.6, 2.1), rand(-0.25, 0.25));
     s.rotation.set(rand(0, 3), rand(0, 3), 0);
     z.add(s);
@@ -1122,9 +1163,9 @@ function bossGolem() {
   const core = sphere(0.2, coreMat); core.position.set(0, 0.14, 0.2); p.torso.add(core);
   const coreLight = new THREE.PointLight(0x3ad0ff, 2.4, 6, 2); coreLight.position.set(0, 1.0, 0.3); z.add(coreLight);
   // stone fists
-  for (const side of [p.armL, p.armR]) { const f = new THREE.Mesh(new THREE.DodecahedronGeometry(0.28, 0), stone); f.position.set(0, -0.7, 0); side.add(f); }
+  for (const side of [p.armL, p.armR]) { const f = new THREE.Mesh(geoDodeca(0.28, 0), stone); f.position.set(0, -0.7, 0); side.add(f); }
   // jagged shoulder plates
-  for (const s of [-1, 1]) { const plate = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.5, 4), stone2); plate.position.set(s * 0.4, 1.95, 0); plate.rotation.x = s * 0.4; z.add(plate); }
+  for (const s of [-1, 1]) { const plate = new THREE.Mesh(geoCone(0.24, 0.5, 4), stone2); plate.position.set(s * 0.4, 1.95, 0); plate.rotation.x = s * 0.4; z.add(plate); }
   z.userData.boss = 'golem';
   z.userData.parts.coreLight = coreLight;
   return z;
@@ -1145,7 +1186,7 @@ function bossRunner() {
   const eyeMat = mat(0x8affff, { emissive: 0x6affff, emissiveIntensity: 2.0 });
   for (const s of [-1, 1]) { const e = sphere(0.04, eyeMat); e.position.set(s * 0.08, 0.04, 0.16); p.head.add(e); }
   // long tail-like trail of energy
-  const trail = new THREE.Mesh(new THREE.ConeGeometry(0.18, 1.6, 6), streakMat);
+  const trail = new THREE.Mesh(geoCone(0.18, 1.6, 6), streakMat);
   trail.rotation.x = -Math.PI / 2; trail.position.set(0, 1.1, -1.0); z.add(trail);
   const speedLight = new THREE.PointLight(0x6ae0ff, 2.0, 6, 2); speedLight.position.set(0, 1.1, -0.6); z.add(speedLight);
   z.userData.boss = 'runner';
@@ -1163,7 +1204,7 @@ function bossRegenerator() {
   // scar tissue / regrowth nodes
   const scarMat = mat(0x8ad07a, { emissive: 0x6aff5a, emissiveIntensity: 0.6, roughness: 0.7 });
   for (let i = 0; i < 8; i++) {
-    const n = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.07, 0.14), 0), scarMat);
+    const n = new THREE.Mesh(geoIcos(rand(0.07, 0.14), 0), scarMat);
     n.position.set(rand(-0.36, 0.36), rand(0.5, 2.0), rand(-0.22, 0.22));
     z.add(n);
   }
@@ -1186,14 +1227,14 @@ function bossTitan() {
   // massive layered armor plates
   const plates = [[0.9, 0.5, 1.1], [0.7, 0.4, 0.9], [0.5, 0.3, 0.7]];
   plates.forEach(([sx, sy, sz], i) => {
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), armorMat);
+    const plate = new THREE.Mesh(geoBox(sx, sy, sz), armorMat);
     plate.position.set(0, 1.2 + i * 0.45, 0);
     z.add(plate);
   });
   // huge metal gauntlets
-  for (const side of [p.armL, p.armR]) { const g = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.4), armorMat); g.position.set(0, -0.7, 0); side.add(g); }
+  for (const side of [p.armL, p.armR]) { const g = new THREE.Mesh(geoBox(0.4, 0.5, 0.4), armorMat); g.position.set(0, -0.7, 0); side.add(g); }
   // crown of spikes
-  for (let i = 0; i < 5; i++) { const sp = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.3, 5), armorMat); sp.position.set((i - 2) * 0.12, 0.18, 0); p.head.add(sp); }
+  for (let i = 0; i < 5; i++) { const sp = new THREE.Mesh(geoCone(0.06, 0.3, 5), armorMat); sp.position.set((i - 2) * 0.12, 0.18, 0); p.head.add(sp); }
   // molten core glow between plates
   const glowMat = mat(0xff8a2a, { emissive: 0xff7a1a, emissiveIntensity: 1.6, roughness: 0.5 });
   const gap1 = box(0.72, 0.06, 0.92, glowMat); gap1.position.set(0, 1.42, 0); z.add(gap1);
@@ -1211,7 +1252,7 @@ function bossWraith() {
   // wispy spectral tendrils
   const wispMat = mat(0xa07aff, { emissive: 0x8a5aff, emissiveIntensity: 1.4, transparent: true, opacity: 0.6, roughness: 0.5 });
   for (let i = 0; i < 9; i++) {
-    const w = new THREE.Mesh(new THREE.ConeGeometry(rand(0.08, 0.16), rand(0.5, 1.2), 5), wispMat);
+    const w = new THREE.Mesh(geoCone(rand(0.08, 0.16), rand(0.5, 1.2), 5), wispMat);
     w.position.set(rand(-0.4, 0.4), rand(-0.2, 0.4), rand(-0.3, 0.3));
     w.rotation.x = Math.PI + rand(-0.4, 0.4);
     z.add(w);
@@ -1301,7 +1342,7 @@ function bossFrostKing() {
     emissive: 0x6ab0ff, emissiveIntensity: 0.5,
     transparent: true, opacity: 0.75, roughness: 0.12, metalness: 0.45,
   });
-  const aura = new THREE.Mesh(new THREE.IcosahedronGeometry(1.15, 1), mat(0x8ac4ff, {
+  const aura = new THREE.Mesh(geoIcos(1.15, 1), mat(0x8ac4ff, {
     emissive: 0x4a9aff, emissiveIntensity: 0.6, transparent: true, opacity: 0.16, roughness: 0.1,
   }));
   aura.position.y = 0.95;
@@ -1312,19 +1353,19 @@ function bossFrostKing() {
   p.head.add(crown);
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2;
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.16, 4), crown.material);
+    const tip = new THREE.Mesh(geoCone(0.04, 0.16, 4), crown.material);
     tip.position.set(Math.cos(a) * 0.17, 0.36, Math.sin(a) * 0.17);
     p.head.add(tip);
   }
   for (const side of [p.armL, p.armR]) {
-    const shard = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.55, 6), iceMat);
+    const shard = new THREE.Mesh(geoCone(0.14, 0.55, 6), iceMat);
     shard.position.set(0, -0.62, 0);
     shard.rotation.x = Math.PI;
     side.add(shard);
   }
   const shoulderShards = new THREE.Group();
   for (const s of [-1, 1]) {
-    const sh = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.4, 6), iceMat);
+    const sh = new THREE.Mesh(geoCone(0.1, 0.4, 6), iceMat);
     sh.position.set(s * 0.38, 0.55, 0);
     sh.rotation.z = s * -0.5;
     shoulderShards.add(sh);
@@ -1347,13 +1388,13 @@ function bossPyroLord() {
   core.position.set(0, 0.12, 0.18);
   p.torso.add(core);
   for (let i = 0; i < 8; i++) {
-    const ember = new THREE.Mesh(new THREE.ConeGeometry(0.05, rand(0.14, 0.3), 4), fireMat);
+    const ember = new THREE.Mesh(geoCone(0.05, rand(0.14, 0.3), 4), fireMat);
     ember.position.set(rand(-0.3, 0.3), rand(0.25, 0.6), rand(-0.16, 0.16));
     z.add(ember);
   }
   const hornMat = mat(0x241a14, { roughness: 0.8 });
   for (const s of [-1, 1]) {
-    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.34, 6), hornMat);
+    const horn = new THREE.Mesh(geoCone(0.07, 0.34, 6), hornMat);
     horn.position.set(s * 0.16, 0.22, 0);
     horn.rotation.z = s * -0.6;
     p.head.add(horn);
@@ -1381,7 +1422,7 @@ function bossAbomination() {
   const growthMat = mat(0x5a6a44, { roughness: 1 });
   const growthMat2 = mat(0x6a7a50, { roughness: 1 });
   for (let i = 0; i < 7; i++) {
-    const g = new THREE.Mesh(new THREE.DodecahedronGeometry(rand(0.09, 0.2), 0), i % 2 ? growthMat : growthMat2);
+    const g = new THREE.Mesh(geoDodeca(rand(0.09, 0.2), 0), i % 2 ? growthMat : growthMat2);
     g.position.set(rand(-0.34, 0.34), rand(0.85, 1.9), rand(-0.2, 0.2));
     g.rotation.set(rand(0, 3), rand(0, 3), 0);
     z.add(g);
@@ -1390,13 +1431,13 @@ function bossAbomination() {
   jaw.position.set(0, -0.2, 0.12);
   p.head.add(jaw);
   for (const s of [-1, 1]) {
-    const maw = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 4), mat(0xd8d0c0, { roughness: 0.6 }));
+    const maw = new THREE.Mesh(geoCone(0.05, 0.14, 4), mat(0xd8d0c0, { roughness: 0.6 }));
     maw.position.set(s * 0.09, -0.14, 0.18);
     maw.rotation.x = Math.PI;
     p.head.add(maw);
   }
   for (const side of [p.armL, p.armR]) {
-    const club = new THREE.Mesh(new THREE.DodecahedronGeometry(0.22, 0), growthMat);
+    const club = new THREE.Mesh(geoDodeca(0.22, 0), growthMat);
     club.position.set(0, -0.66, 0);
     side.add(club);
   }
@@ -1490,7 +1531,7 @@ export function createProp(kind = 'tree') {
 function propReactor() { // dôme de confinement fêlé + trèfle radioactif pulsant
   const model = new THREE.Group(); model.name = 'prop-reactor';
   const concrete = mat(0x8a917e, { roughness: 0.95 });
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.35, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), concrete);
+  const dome = new THREE.Mesh(geoSphereHalf(1.35, 20, 14), concrete);
   dome.scale.y = 0.78; dome.castShadow = true; model.add(dome);
   const baseC = cyl(1.65, 1.75, 0.34, mat(0x6e7466, { roughness: 1 }), 20); baseC.position.y = 0.17; model.add(baseC);
   // fente de lumière radioactive traversant le dôme
@@ -1504,14 +1545,14 @@ function propReactor() { // dôme de confinement fêlé + trèfle radioactif pul
   const disc = cyl(0.34, 0.34, 0.05, discM, 20); disc.position.y = 1.5; disc.rotation.x = Math.PI / 2;
   for (let i = 0; i < 3; i++) {
     const wedgeM = mat(0x1c1a10);
-    const wedgeGeo = new THREE.CircleGeometry(0.26, 12, i * ((Math.PI * 2) / 3 + 0.5), (Math.PI * 2) / 3 - 0.5);
+    const wedgeGeo = geoCircle(0.26, 12, i * ((Math.PI * 2) / 3 + 0.5), (Math.PI * 2) / 3 - 0.5);
     const wedge = new THREE.Mesh(wedgeGeo, wedgeM); wedge.position.z = 0.03; disc.add(wedge);
   }
   post.add(disc);
   // halo au sol
   const glowMat = mat(0x8dff5a, { emissive: 0x6dff2e, emissiveIntensity: 1.1 });
   for (let i = 0; i < 5; i++) {
-    const g = new THREE.Mesh(new THREE.TorusGeometry(rand(0.4, 0.9), 0.025, 6, 24), glowMat);
+    const g = new THREE.Mesh(geoTorus(rand(0.4, 0.9), 0.025, 6, 24), glowMat);
     g.rotation.x = -Math.PI / 2; g.position.y = rand(0.38, 1.0); model.add(g);
   }
   return model;
@@ -1523,7 +1564,7 @@ function propRBarrel() { // baril de déchets verts, luisant à travers les band
   body.position.y = 0.475; body.castShadow = true; model.add(body);
   const rimMat = mat(0xaab76e, { metalness: 0.5, roughness: 0.4 });
   for (const y of [0.18, 0.72]) {
-    const r = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.03, 6, 16), rimMat);
+    const r = new THREE.Mesh(geoTorus(0.33, 0.03, 6, 16), rimMat);
     r.rotation.x = Math.PI / 2; r.position.y = y; model.add(r);
   }
   // bandes de danger + symbole
@@ -1543,7 +1584,7 @@ function propHStripes() { // plot de sol jaune/noir rayé (marquage danger)
   const baseS = box(1.6, 0.05, 1.2, mat(0x3a4034, { roughness: 1 })); baseS.position.y = 0.03; model.add(baseS);
   const yellow = mat(0xd8c832, { roughness: 0.7 }); const black = mat(0x1e221a, { roughness: 0.9 });
   for (let i = 0; i < 5; i++) {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 1.1), i % 2 ? black : yellow);
+    const stripe = new THREE.Mesh(geoBox(0.28, 0.06, 1.1), i % 2 ? black : yellow);
     stripe.position.set(-0.64 + i * 0.32, 0.05, 0); model.add(stripe);
   }
   return model;
@@ -1557,7 +1598,7 @@ function propRadPlant() { // grappes de champignons/branches bioluminescents mal
     const h = rand(0.4, 0.9); const a = rand(0, Math.PI * 2);
     const st = cyl(0.035, 0.06, h, stemM, 6); st.position.set(Math.cos(a) * rand(0, 0.3), h / 2, Math.sin(a) * rand(0, 0.3));
     st.rotation.x = rand(-0.18, 0.18); st.rotation.z = rand(0.18, -0.18);
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(rand(0.09, 0.16), 10, 8), glowM); cap.position.y = h + 0.05; st.add(cap);
+    const cap = new THREE.Mesh(geoSphere(rand(0.09, 0.16), 10, 8), glowM); cap.position.y = h + 0.05; st.add(cap);
     model.add(st);
   }
   return model;
@@ -1568,8 +1609,7 @@ function propBoulder() { // amas de roche noire (ashlands) — plus massif que p
   const st = mat(0x3f3a34, { roughness: 1 });
   for (let i = 0; i < 5; i++) {
     const r = rand(0.25, 0.6); let b;
-    if (_geoCache.has('icos' + r)) b = _geoCache.get('icos' + r);
-    else { b = new THREE.IcosahedronGeometry(r, 0); _geoCache.set('icos' + r, b); }
+    b = geoIcos(r);
     const m = new THREE.Mesh(b, st); m.position.set(rand(-0.6, 0.6), rand(0.15, 0.35), rand(-0.4, 0.4));
     m.rotation.set(rand(0, 3), rand(0, 3), 0); m.scale.y = rand(0.7, 0.9); m.castShadow = true; model.add(m);
   }
@@ -1583,7 +1623,7 @@ function propReeds() { // roseaux penchés de la zone marécageuse/spéctrale
     const h = rand(0.7, 1.3); const s = cyl(0.025, 0.05, h, m, 5);
     s.position.set(rand(-0.25, 0.25), h / 2, rand(-0.2, 0.2));
     s.rotation.x = (Math.random() - 0.5) * 0.4; s.rotation.z = (Math.random() - 0.5) * 0.5;
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.18, 5), m); tip.position.y = h / 2 + 0.09; s.add(tip);
+    const tip = new THREE.Mesh(geoCone(0.06, 0.18, 5), m); tip.position.y = h / 2 + 0.09; s.add(tip);
     model.add(s);
   }
   return model;
@@ -1596,15 +1636,15 @@ function propTree() {
   trunk.position.y = 0.8;
   model.add(trunk);
   const foliageMat = mat(0x3a5a34, { roughness: 1 });
-  const f1 = new THREE.Mesh(new THREE.IcosahedronGeometry(0.85, 0), foliageMat);
+  const f1 = new THREE.Mesh(geoIcos(0.85, 0), foliageMat);
   f1.position.y = 2.1;
   f1.castShadow = true;
   model.add(f1);
-  const f2 = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6, 0), foliageMat);
+  const f2 = new THREE.Mesh(geoIcos(0.6, 0), foliageMat);
   f2.position.set(0.45, 1.75, 0.2);
   f2.castShadow = true;
   model.add(f2);
-  const f3 = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 0), foliageMat);
+  const f3 = new THREE.Mesh(geoIcos(0.5, 0), foliageMat);
   f3.position.set(-0.4, 1.6, -0.25);
   f3.castShadow = true;
   model.add(f3);
@@ -1617,11 +1657,11 @@ function propRock() {
   const model = new THREE.Group();
   model.name = 'prop-rock';
   const rockMat = mat(0x6a6f72, { roughness: 1 });
-  const r1 = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5, 0), rockMat);
+  const r1 = new THREE.Mesh(geoDodeca(0.5, 0), rockMat);
   r1.position.y = 0.3;
   r1.castShadow = true;
   model.add(r1);
-  const r2 = new THREE.Mesh(new THREE.DodecahedronGeometry(0.28, 0), rockMat);
+  const r2 = new THREE.Mesh(geoDodeca(0.28, 0), rockMat);
   r2.position.set(0.5, 0.18, 0.2);
   r2.castShadow = true;
   model.add(r2);
@@ -1634,7 +1674,7 @@ function propBush() {
   model.name = 'prop-bush';
   const bushMat = mat(0x446a3a, { roughness: 1 });
   for (let i = 0; i < 3; i++) {
-    const s = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.22, 0.36), 0), bushMat);
+    const s = new THREE.Mesh(geoIcos(rand(0.22, 0.36), 0), bushMat);
     s.position.set(rand(-0.3, 0.3), 0.25, rand(-0.2, 0.2));
     s.castShadow = true;
     model.add(s);
@@ -1653,7 +1693,7 @@ function propGrass() {
   const n = 6 + Math.floor(rand(0, 3));
   for (let i = 0; i < n; i++) {
     const h = rand(0.26, 0.5);
-    const blade = new THREE.Mesh(new THREE.ConeGeometry(0.014, h, 4, 1), grassMat);
+    const blade = new THREE.Mesh(geoCone(0.014, h, 4), grassMat);
     const a = rand(0, Math.PI * 2);
     const r = rand(0, 0.12);
     blade.position.set(Math.cos(a) * r, h / 2 - 0.02, Math.sin(a) * r);
@@ -1688,7 +1728,7 @@ function propStump() {
   const wood = mat(0x5a4433, { roughness: 1 });
   const base = cyl(0.3, 0.36, 0.5, wood, 10); base.position.y = 0.25; model.add(base);
   const top = cyl(0.32, 0.3, 0.06, mat(0x8a6f52, { roughness: 0.9 }), 10); top.position.y = 0.52; model.add(top);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.02, 6, 14), wood); ring.rotation.x = Math.PI / 2; ring.position.y = 0.55; model.add(ring);
+  const ring = new THREE.Mesh(geoTorus(0.18, 0.02, 6, 14), wood); ring.rotation.x = Math.PI / 2; ring.position.y = 0.55; model.add(ring);
   const crack = box(0.02, 0.5, 0.06, mat(0x3a2a1e)); crack.position.set(0.28, 0.28, 0); model.add(crack);
   return model;
 }
@@ -1735,7 +1775,7 @@ function propCart() {
   const rail = box(1.1, 0.18, 0.06, wood); rail.position.set(0, 0.62, -0.32); model.add(rail);
   const rail2 = box(1.1, 0.18, 0.06, wood); rail2.position.set(0, 0.62, 0.32); model.add(rail2);
   for (const [sx, sz] of [[-0.45, -0.35], [0.45, -0.35], [-0.45, 0.35], [0.45, 0.35]]) {
-    const w = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.05, 8, 14), metal); w.rotation.y = Math.PI / 2; w.position.set(sx, 0.18, sz); model.add(w);
+    const w = new THREE.Mesh(geoTorus(0.18, 0.05, 8, 14), metal); w.rotation.y = Math.PI / 2; w.position.set(sx, 0.18, sz); model.add(w);
   }
   model.rotation.y = rand(0, Math.PI * 2);
   return model;
@@ -1746,9 +1786,9 @@ function propWell() {
   model.name = 'prop-well';
   const stone = mat(0x7a7f83, { roughness: 0.95 });
   const wood = mat(0x5a4433, { roughness: 1 });
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.12, 10, 18), stone); ring.rotation.x = Math.PI / 2; ring.position.y = 0.3; model.add(ring);
+  const ring = new THREE.Mesh(geoTorus(0.6, 0.12, 10, 18), stone); ring.rotation.x = Math.PI / 2; ring.position.y = 0.3; model.add(ring);
   const wall = cyl(0.6, 0.62, 0.3, stone, 14); wall.position.y = 0.18; model.add(wall);
-  const water = new THREE.Mesh(new THREE.CircleGeometry(0.55, 16), mat(0x2a4a6a, { emissive: 0x1a3a5a, emissiveIntensity: 0.4 })); water.rotation.x = -Math.PI / 2; water.position.y = 0.35; model.add(water);
+  const water = new THREE.Mesh(geoCircle(0.55, 16), mat(0x2a4a6a, { emissive: 0x1a3a5a, emissiveIntensity: 0.4 })); water.rotation.x = -Math.PI / 2; water.position.y = 0.35; model.add(water);
   for (const s of [-1, 1]) { const post = cyl(0.06, 0.06, 1.3, wood, 8); post.position.set(s * 0.62, 1.0, 0); model.add(post); }
   const roof = box(1.7, 0.1, 1.0, mat(0x5a3a34)); roof.position.y = 1.75; roof.rotation.x = 0.5; model.add(roof);
   const bar = cyl(0.04, 0.04, 1.2, wood, 8); bar.rotation.z = Math.PI / 2; bar.position.y = 1.1; model.add(bar);
@@ -1761,7 +1801,7 @@ function propHedge() {
   model.name = 'prop-hedge';
   const g = mat(0x3a5a30, { roughness: 1 });
   for (let i = 0; i < 6; i++) {
-    const s = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.28, 0.4), 0), g);
+    const s = new THREE.Mesh(geoIcos(rand(0.28, 0.4), 0), g);
     s.position.set((i - 2.5) * 0.5, 0.28, rand(-0.15, 0.15)); s.castShadow = true; model.add(s);
   }
   model.scale.setScalar(rand(0.8, 1.1));
@@ -1774,7 +1814,7 @@ function propMushroom() {
   for (let i = 0; i < 3; i++) {
     const x = rand(-0.2, 0.2), z = rand(-0.15, 0.15);
     const stem = cyl(0.03, 0.04, 0.18, mat(0xd8d0c0, { roughness: 0.8 }), 6); stem.position.set(x, 0.09, z); model.add(stem);
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xb04a3a, { roughness: 0.7 }));
+    const cap = new THREE.Mesh(geoSphereHalf(0.1, 8, 6), mat(0xb04a3a, { roughness: 0.7 }));
     cap.position.set(x, 0.18, z); model.add(cap);
     for (let d = 0; d < 3; d++) { const spot = sphere(0.018, mat(0xe8e0d0)); spot.position.set(x + rand(-0.05, 0.05), 0.2, z + rand(-0.05, 0.05)); model.add(spot); }
   }
@@ -1786,7 +1826,7 @@ function propSnowPile() {
   model.name = 'prop-snowpile';
   const s = mat(0xf0f6fc, { roughness: 0.6, emissive: 0x2a3a4a, emissiveIntensity: 0.15 });
   for (let i = 0; i < 3; i++) {
-    const blob = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.4, 0.7), 0), s);
+    const blob = new THREE.Mesh(geoIcos(rand(0.4, 0.7), 0), s);
     blob.position.set(rand(-0.3, 0.3), rand(0.2, 0.4), rand(-0.2, 0.2)); blob.castShadow = true; model.add(blob);
   }
   return model;
@@ -1799,7 +1839,7 @@ function propRockSpire() {
   const rockMat = mat(0x3a2a26, { roughness: 1 });
   for (let i = 0; i < 4; i++) {
     const h = rand(0.8, 2.2);
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(rand(0.25, 0.5), h, 5, 1), rockMat);
+    const spike = new THREE.Mesh(geoCone(rand(0.25, 0.5), h, 5, true), rockMat);
     spike.position.set(rand(-0.5, 0.5), h / 2, rand(-0.4, 0.4));
     spike.rotation.set(rand(-0.2, 0.2), rand(0, Math.PI * 2), rand(-0.2, 0.2));
     spike.castShadow = true; model.add(spike);
@@ -1817,11 +1857,11 @@ function propLavaPool() {
   const model = new THREE.Group();
   model.name = 'prop-lavapool';
   const rim = mat(0x2a1a16, { roughness: 1 });
-  const pool = new THREE.Mesh(new THREE.CircleGeometry(0.7, 18), mat(0xff5a1a, { emissive: 0xff4a10, emissiveIntensity: 1.6, roughness: 0.4 }));
+  const pool = new THREE.Mesh(geoCircle(0.7, 18), mat(0xff5a1a, { emissive: 0xff4a10, emissiveIntensity: 1.6, roughness: 0.4 }));
   pool.rotation.x = -Math.PI / 2; pool.position.y = 0.04; model.add(pool);
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
-    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(rand(0.12, 0.2), 0), rim);
+    const rock = new THREE.Mesh(geoDodeca(rand(0.12, 0.2), 0), rim);
     rock.position.set(Math.cos(a) * 0.72, 0.1, Math.sin(a) * 0.72); model.add(rock);
   }
   const glow = new THREE.PointLight(0xff5a1a, 1.5, 5, 2); glow.position.y = 0.4; model.add(glow);
@@ -1833,7 +1873,7 @@ function propCinder() {
   const model = new THREE.Group();
   model.name = 'prop-cinder';
   const ash = mat(0x4a3a32, { roughness: 1 });
-  const blob = new THREE.Mesh(new THREE.DodecahedronGeometry(rand(0.2, 0.4), 0), ash); blob.position.y = 0.15; blob.castShadow = true; model.add(blob);
+  const blob = new THREE.Mesh(geoDodeca(rand(0.2, 0.4), 0), ash); blob.position.y = 0.15; blob.castShadow = true; model.add(blob);
   const ember = sphere(0.05, mat(0xff6a2a, { emissive: 0xff5a1a, emissiveIntensity: 1.4 })); ember.position.set(0.1, 0.3, 0.05); model.add(ember);
   model.scale.setScalar(rand(0.7, 1.2));
   return model;
@@ -1847,7 +1887,7 @@ export function createVolcano(scale = 1) {
 
   const H = 15, R = 10;
   // Jagged, rugged cone: displace the radial vertices for a rocky silhouette.
-  const coneGeo = new THREE.ConeGeometry(R, H, 28, 6);
+  const coneGeo = geoCone(R, H, 28, 6);
   {
     const p = coneGeo.attributes.position;
     for (let i = 0; i < p.count; i++) {
@@ -1878,24 +1918,24 @@ export function createVolcano(scale = 1) {
   const bandY = [2.2, 5.2, 8.0, 10.4, 12.2];
   bandY.forEach((y, i) => {
     const rr = R * (1 - (y / H)) * 1.02;
-    const band = new THREE.Mesh(new THREE.TorusGeometry(Math.max(0.3, rr), bands[i] ?? 0.2, 6, 26), strataMat);
+    const band = new THREE.Mesh(geoTorus(Math.max(0.3, rr), bands[i] ?? 0.2, 6, 26), strataMat);
     band.rotation.x = Math.PI / 2; band.position.y = y;
     band.rotation.z = 0.15 + i * 0.2;
     band.castShadow = true; model.add(band);
   });
 
   // Crater rim (thick, lumpy)
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(3.0, 0.75, 10, 26), mat(0x2a1e1a));
+  const rim = new THREE.Mesh(geoTorus(3.0, 0.75, 10, 26), mat(0x2a1e1a));
   rim.rotation.x = Math.PI / 2; rim.position.y = H - 0.6; model.add(rim);
   // inner crater wall (dark bowl)
-  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 1.2, 1.4, 20, 1, true), mat(0x1a1210, { side: THREE.DoubleSide, roughness: 1 }));
+  const bowl = new THREE.Mesh(geoCyl(2.6, 1.2, 1.4, 20, true), mat(0x1a1210, { side: THREE.DoubleSide, roughness: 1 }));
   bowl.position.y = H - 1.0; model.add(bowl);
 
   // Glowing lava lake in the crater
-  const lava = new THREE.Mesh(new THREE.CircleGeometry(2.4, 24), mat(0xff5a1a, { emissive: 0xff4a10, emissiveIntensity: 2.2, roughness: 0.3 }));
+  const lava = new THREE.Mesh(geoCircle(2.4, 24), mat(0xff5a1a, { emissive: 0xff4a10, emissiveIntensity: 2.2, roughness: 0.3 }));
   lava.rotation.x = -Math.PI / 2; lava.position.y = H - 1.0; model.add(lava);
   // bright hot core in the middle of the lake
-  const core = new THREE.Mesh(new THREE.CircleGeometry(1.1, 18), mat(0xffb347, { emissive: 0xff8a2a, emissiveIntensity: 2.6, roughness: 0.2 }));
+  const core = new THREE.Mesh(geoCircle(1.1, 18), mat(0xffb347, { emissive: 0xff8a2a, emissiveIntensity: 2.6, roughness: 0.2 }));
   core.rotation.x = -Math.PI / 2; core.position.y = H - 0.98; model.add(core);
 
   // Lava glow light (stronger, warm)
@@ -1910,7 +1950,7 @@ export function createVolcano(scale = 1) {
     const yTop = H - 1.4 - (i % 3) * 0.8;
     const len = 2.4 + (i % 4) * 0.7;
     const rr = R * (1 - (yTop / H));
-    const streak = new THREE.Mesh(new THREE.PlaneGeometry(0.55, len), streakMat);
+    const streak = new THREE.Mesh(geoPlane(0.55, len), streakMat);
     streak.position.set(Math.cos(a) * (rr + 0.05), yTop - len / 2, Math.sin(a) * (rr + 0.05));
     streak.lookAt(0, yTop, 0);
     streak.rotation.z = (a - Math.PI / 2) * 0.15;
@@ -1922,20 +1962,20 @@ export function createVolcano(scale = 1) {
   for (let i = 0; i < 14; i++) {
     const a = (i / 14) * Math.PI * 2 + 0.3;
     const rr = R + rand(0.6, 3.2);
-    const boulder = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.4, 1.3), 0), rockMat);
+    const boulder = new THREE.Mesh(geoIcos(rand(0.4, 1.3), 0), rockMat);
     boulder.position.set(Math.cos(a) * rr, 0.2, Math.sin(a) * rr);
     boulder.rotation.set(rand(0, 3), rand(0, 3), rand(0, 3));
     boulder.scale.y = rand(0.5, 0.8);
     boulder.castShadow = true; boulder.receiveShadow = true; model.add(boulder);
   }
   // dark scorched ground ring at the base
-  const scorched = new THREE.Mesh(new THREE.RingGeometry(R - 0.5, R + 3.5, 32), mat(0x1a1210, { roughness: 1 }));
+  const scorched = new THREE.Mesh(geoRing(R - 0.5, R + 3.5, 32), mat(0x1a1210, { roughness: 1 }));
   scorched.rotation.x = -Math.PI / 2; scorched.position.y = 0.03; model.add(scorched);
 
   // faint ember particles rising from the crater
   const emberMat = mat(0xff8a2a, { emissive: 0xff6a2a, emissiveIntensity: 1.6 });
   for (let i = 0; i < 10; i++) {
-    const e = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.05, 0.12), 0), emberMat);
+    const e = new THREE.Mesh(geoIcos(rand(0.05, 0.12), 0), emberMat);
     const a = rand(0, Math.PI * 2);
     e.position.set(Math.cos(a) * rand(0.4, 1.6), H + rand(0.2, 2.5), Math.sin(a) * rand(0.4, 1.6));
     model.add(e);
@@ -1953,7 +1993,7 @@ function propTombstone() {
   model.name = 'prop-tombstone';
   const stoneMat = mat(0x7a7f83, { roughness: 0.95 });
   // soil mound at the base
-  const mound = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.18, 12), mat(0x4a4438, { roughness: 1 }));
+  const mound = new THREE.Mesh(geoCone(0.5, 0.18, 12), mat(0x4a4438, { roughness: 1 }));
   mound.position.y = 0.09; mound.castShadow = true; model.add(mound);
   // main slab (slightly tilted, weathered)
   const slab = box(0.5, 0.82, 0.16, stoneMat);
@@ -1961,7 +2001,7 @@ function propTombstone() {
   slab.rotation.z = rand(-0.04, 0.04);
   model.add(slab);
   // rounded top (half-cylinder)
-  const top = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.16, 12, 1, false, 0, Math.PI), stoneMat);
+  const top = new THREE.Mesh(geoCylHalf(0.25, 0.25, 0.16, 12), stoneMat);
   top.rotation.z = Math.PI / 2;
   top.rotation.y = Math.PI / 2;
   top.position.y = 0.82;
@@ -1979,11 +2019,11 @@ function propTombstone() {
   const chip = box(0.08, 0.1, 0.16, mat(0x5a5f63)); chip.position.set(0.2, 0.78, 0); model.add(chip);
   // moss on top + at base
   const mossMat = mat(0x4a5a3a, { roughness: 1 });
-  for (let i = 0; i < 3; i++) { const moss = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.06, 0.1), 0), mossMat); moss.position.set(rand(-0.2, 0.2), 0.06 + i * 0.02, rand(-0.08, 0.08)); model.add(moss); }
-  const mossTop = new THREE.Mesh(new THREE.IcosahedronGeometry(0.08, 0), mossMat); mossTop.position.set(rand(-0.1, 0.1), 0.9, 0); model.add(mossTop);
+  for (let i = 0; i < 3; i++) { const moss = new THREE.Mesh(geoIcos(rand(0.06, 0.1), 0), mossMat); moss.position.set(rand(-0.2, 0.2), 0.06 + i * 0.02, rand(-0.08, 0.08)); model.add(moss); }
+  const mossTop = new THREE.Mesh(geoIcos(0.08, 0), mossMat); mossTop.position.set(rand(-0.1, 0.1), 0.9, 0); model.add(mossTop);
   // a couple of small weeds
   const weedMat = mat(0x5a7a4a, { roughness: 1 });
-  for (let i = 0; i < 3; i++) { const w = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.2, 4, 1), weedMat); w.position.set(rand(-0.4, 0.4), 0.1, rand(-0.1, 0.1)); model.add(w); }
+  for (let i = 0; i < 3; i++) { const w = new THREE.Mesh(geoCone(0.012, 0.2, 4, true), weedMat); w.position.set(rand(-0.4, 0.4), 0.1, rand(-0.1, 0.1)); model.add(w); }
   // a smaller broken headstone beside it
   const sideStone = box(0.28, 0.4, 0.1, stoneMat); sideStone.position.set(0.65, 0.2, 0.1); sideStone.rotation.z = 0.12; model.add(sideStone);
   model.scale.setScalar(rand(0.85, 1.15));
@@ -2148,7 +2188,7 @@ export function createExplosionModel(embers = 14) {
   model.name = 'explosion';
 
   const ringMat = mat(0xffaa44, { emissive: 0xff7722, emissiveIntensity: 1.8, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.06, 8, 24), ringMat);
+  const ring = new THREE.Mesh(geoTorus(0.5, 0.06, 8, 24), ringMat);
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.06;
   ring.name = 'ring';
@@ -2187,7 +2227,7 @@ export function createMuzzleFlashModel() {
   model.add(core);
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2 + 0.4;
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.18, 4), m);
+    const spike = new THREE.Mesh(geoCone(0.03, 0.18, 4), m);
     spike.position.set(Math.cos(a) * 0.1, 0, Math.sin(a) * 0.1);
     spike.rotation.x = Math.PI / 2;
     spike.rotation.y = a;
@@ -2196,9 +2236,14 @@ export function createMuzzleFlashModel() {
   return model;
 }
 
+// Géométrie partagée du cercle de portée (pour ré-affecter sans dispose).
+export function rangeCircleGeo(radius = 1) {
+  return geoRing(radius * 0.985, radius, 48);
+}
+
 export function createRangeCircle(radius = 1, color = 0x66ccff) {
   const m = new THREE.Mesh(
-    new THREE.RingGeometry(radius * 0.985, radius, 48),
+    geoRing(radius * 0.985, radius, 48),
     mat(color, { emissive: color, emissiveIntensity: 0.8, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
   );
   m.rotation.x = -Math.PI / 2;
@@ -2209,7 +2254,7 @@ export function createRangeCircle(radius = 1, color = 0x66ccff) {
 
 export function createIceMistRing(radius = 1) {
   const m = new THREE.Mesh(
-    new THREE.TorusGeometry(radius, radius * 0.12, 8, 32),
+    geoTorus(radius, radius * 0.12, 8, 32),
     mat(0xbfe8ff, { emissive: 0x8ac8ff, emissiveIntensity: 1.2, transparent: true, opacity: 0.5 })
   );
   m.rotation.x = -Math.PI / 2;

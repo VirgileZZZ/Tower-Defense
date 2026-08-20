@@ -2,9 +2,16 @@ import * as THREE from 'three';
 import { CONFIG, DIFFICULTIES, MODES, WAVES_BY_MODE, buildInfiniteWave, terrainHeight } from './config.js';
 import { Path } from './path.js';
 import { Zombie, Tower, Projectile } from './entities.js';
-import { createBaseModel, createProp, createVolcano, createRangeCircle, applySkin } from './assets.js';
+import { createBaseModel, createProp, createVolcano, createRangeCircle, applySkin,
+  createTowerModel, createZombieModel, createBossModel, createProjectileModel } from './assets.js';
 import { loadSave, persistSave, resetSave, SHOP } from './save.js';
 import { SFX } from './sound.js';
+
+// Calotte de neige (hiver) : géométrie + matériau partagés entre tous les
+// arbres/buissons — un seul upload GPU, jamais disposés.
+const _snowCapGeo = new THREE.IcosahedronGeometry(0.4, 0);
+_snowCapGeo.userData.shared = true;
+const _snowCapMat = new THREE.MeshStandardMaterial({ color: 0xf0f6fc, roughness: 0.5, emissive: 0x2a3a4a, emissiveIntensity: 0.15 });
 
 // ---------------------------------------------------------------------------
 // Game — state machine, wave spawner, economy, master update loop.
@@ -61,6 +68,113 @@ export class Game {
 
     this.spawner = null;
     this.lastFrame = performance.now();
+    this._shadersWarm = false;
+  }
+
+  // Pré-compile TOUS les shaders au démarrage (une fois par session).
+  // Sans ça, la 1ère fois qu'un modèle est rendu (nouvelle tour posée, 1er
+  // zombie d'un type, 1er VFX…), la GPU compile son programme et le jeu
+  // freeze ~1/2 s. Ici tout est compilé avant la 1ère image.
+  // Construit un groupe temporaire contenant TOUS les modèles du jeu
+  // (tours × skins, base × skins, zombies × skins, boss, décor, munitions).
+  _buildWarmupGroup() {
+    const tmp = new THREE.Group();
+    tmp.name = '__warmup__';
+    // Tours : classic + toutes les skins (phantom = translucide → programme distinct)
+    for (const t of Object.keys(CONFIG.towers)) {
+      tmp.add(createTowerModel(t));
+      for (const sk of ['auric', 'phantom', 'magma']) {
+        const m = createTowerModel(t);
+        applySkin(m, sk);
+        tmp.add(m);
+      }
+    }
+    // Base + skins maison (haunted = translucide)
+    tmp.add(createBaseModel());
+    for (const sk of ['enchanted', 'crystal', 'haunted']) {
+      const m = createBaseModel();
+      applySkin(m, sk);
+      tmp.add(m);
+    }
+    // Zombies (types × skins) + tous les boss
+    for (const zt of Object.keys(CONFIG.zombies))
+      for (const sk of Object.keys(CONFIG.skins))
+        tmp.add(createZombieModel(zt, sk));
+    for (const bk of Object.keys(CONFIG.bosses)) tmp.add(createBossModel(bk));
+    // Décor de tous les thèmes + volcan + cercle de portée
+    const kinds = new Set();
+    for (const th of CONFIG.themes) for (const k of (th.props || [])) kinds.add(k);
+    for (const k of kinds) tmp.add(createProp(k));
+    tmp.add(createVolcano(1));
+    tmp.add(createRangeCircle(5));
+    // Munitions (protos partagés : marqués userData.shared, ne pas disposer)
+    for (const k of ['bullet', 'tracer', 'shell', 'frost', 'fireball'])
+      tmp.add(createProjectileModel(k));
+    return tmp;
+  }
+
+  // Un passage de préchauffage : ajoute tous les modèles, compile + rend la
+  // scène une fois (état réel : ombres, brouillard, lumières), puis nettoie.
+  // Les PROGRAMMES restent compilés dans la cache du renderer ; on libère
+  // juste les matériaux temporaires (la géométrie est en cache partagé).
+  _warmupPass() {
+    const tmp = this._buildWarmupGroup();
+    this.scene.add(tmp);
+    // Les modèles temporaires apportent leurs PointLights, ce qui gonflerait
+    // le total au-delà du nombre de jeu (le pad ne peut pas être négatif).
+    // La clé de cache des programmes incluant le NOMBRE de point lights, on
+    // retire ces lumières pour que le warmup compile exactement les mêmes
+    // programmes (compteur constant via LightPad) que la vraie partie.
+    const tmpLights = [];
+    tmp.traverse((o) => { if (o.isPointLight) tmpLights.push(o); });
+    for (const l of tmpLights) l.removeFromParent();
+    if (this.lightPad) this.lightPad.update();
+    // VFX représentatifs (ajoutés à la vraie scène, nettoyés juste après)
+    const p = new THREE.Vector3(0, 0.5, 0);
+    this.vfx.explosion(p, 'normal');
+    this.vfx.explosion(p, 'big');
+    this.vfx.ring(p, 0xffffff, 3);
+    this.vfx.iceRing(p);
+    this.vfx.earthSpawn(p);
+    this.vfx.muzzleFlash(p);
+    if (this.vfx.zap) this.vfx.zap(new THREE.Vector3(0, 1, 0), [new THREE.Vector3(2, 1.2, 0)]);
+    try {
+      // 1) compile tous les programmes (forward)
+      this.renderer.compile(this.scene, this.camera);
+      // 2) UN vrai rendu : compile() ne fait QUE compiler — la géométrie et
+      //    le programme depth des ombres ne partent sur le GPU qu'au 1er rendu
+      //    réel, et certains paramètres de programme ne se figent qu'alors.
+      this.renderer.render(this.scene, this.camera);
+    } catch (e) { /* contexte WebGL absent : on ignore */ }
+    // Nettoyage
+    this.scene.remove(tmp);
+    if (this.lightPad) this.lightPad.update();
+    tmp.traverse((o) => {
+      if (!o.material || o.userData.shared) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) if (m && m.dispose) m.dispose();
+    });
+    this.vfx.dispose(); // retire les VFX de préchauffage
+  }
+
+  // Préchauffage au démarrage (menu) : tous les shaders, géométries, ombres.
+  _warmupShaders() {
+    if (this._shadersWarm || !this.renderer || !this.vfx) return;
+    this._shadersWarm = true;
+    const t0 = performance.now();
+    this._warmupPass();
+    if (import.meta.env.DEV) console.log('[warmup] shaders compilés en', (performance.now() - t0).toFixed(0), 'ms');
+  }
+
+  // Préchauffage en jeu : certains programmes ne se compilent qu'avec l'état
+  // EXACT de la partie (brouillard/thème/wave actifs). Ré-exécuté une seule
+  // fois à l'entrée en jeu pour que la 1ère pose de tour reste fluide.
+  _warmupGamePass() {
+    if (this._gameShadersWarm || this.state !== 'PLAYING' || !this.renderer || !this.vfx) return;
+    this._gameShadersWarm = true;
+    const t0 = performance.now();
+    this._warmupPass();
+    if (import.meta.env.DEV) console.log('[warmup] passage en jeu en', (performance.now() - t0).toFixed(0), 'ms');
   }
 
   // Scatter scenery props for a given theme's prop list.
@@ -126,9 +240,8 @@ export class Game {
             }
           }
         });
-        // add a snow cap on top
-        const cap = new THREE.Mesh(new THREE.IcosahedronGeometry(0.4, 0),
-          new THREE.MeshStandardMaterial({ color: 0xf0f6fc, roughness: 0.5, emissive: 0x2a3a4a, emissiveIntensity: 0.15 }));
+        // add a snow cap on top (géométrie + matériau partagés, voir en haut de module)
+        const cap = new THREE.Mesh(_snowCapGeo, _snowCapMat);
         cap.position.y = (m.name === 'prop-tree' ? 2.4 : 0.5) * m.scale.x;
         cap.scale.setScalar(m.name === 'prop-tree' ? 0.8 : 0.6);
         m.add(cap);
@@ -354,6 +467,9 @@ export class Game {
     this.autoWaveReady = true;
     this.autoWaveT0 = performance.now();
     this.ui.refreshHUD();
+    // Préchauffage avec l'état réel de la partie (1 seule fois) : la 1ère
+    // pose de tour ne doit JAMAIS compiler de shader en plein jeu.
+    this._warmupGamePass();
   }
 
   restart() {
@@ -364,6 +480,7 @@ export class Game {
     this.autoWaveT0 = performance.now();
     this.applyTheme(1);
     this.ui.refreshHUD();
+    this._warmupGamePass();
   }
 
   // Le plus haut mode fini débloqué (chaîne : Débutant → Moyen → Avancé → Impossible)
@@ -977,13 +1094,15 @@ export class Game {
   _checkWaveComplete(now) {
     if (this.state !== 'PLAYING') return;
     // all waves done and nothing alive -> win
+    // (les squelettes alliés NE bloquent PAS la fin de vague — ils ne sont
+    //  pas des ennemis : ils peuvent marcher vers l'entrée tranquillement)
     if (!this.infiniteMode && this.waveIndex >= this.totalWavesNow()) {
-      const anyAlive = this.zombies.some((z) => z.alive) || (this.spawner && this.spawner.queue.length > 0);
+      const anyAlive = this.zombies.some((z) => z.alive && !z.skeleton) || (this.spawner && this.spawner.queue.length > 0);
       if (!anyAlive) { this._win(); return; }
     }
     // current wave cleared -> open next (auto timer)
     if (this.currentWave && this.spawner === null) {
-      const anyAlive = this.zombies.some((z) => z.alive);
+      const anyAlive = this.zombies.some((z) => z.alive && !z.skeleton);
       if (!anyAlive) {
         if (!this.infiniteMode && this.waveIndex >= this.totalWavesNow()) {
           if (this.sfx) this.sfx.win(); this._win();
@@ -1068,9 +1187,25 @@ export class Game {
 
   _placeVolcano() {
     const v = createVolcano(1);
-    // park the volcano in a clear corner away from the path + base
-    v.position.set(-20, 0, 12);
-    v.rotation.y = 0.5;
+    // Cherche un emplacement net : le volcan (base R=10 + rochers/zone
+    // calcinée jusqu'à ~13,5) ne doit JAMAIS toucher le chemin (la fin du
+    // chemin = la base est comprise dans l'échantillonnage).
+    const R_MIN = 14;
+    let best = null, bestD = 0;
+    for (let x = -26; x <= 26; x += 2) {
+      for (let z = -20; z <= 20; z += 2) {
+        let minD = Infinity;
+        for (let p = 0; p <= 1.0001; p += 0.01) {
+          const pt = this.path.pointAt(Math.min(1, p));
+          const d = Math.hypot(pt.x - x, pt.z - z);
+          if (d < minD) minD = d;
+        }
+        if (minD > R_MIN && minD > bestD) { bestD = minD; best = { x, z }; }
+      }
+    }
+    const pos = best || { x: -20, z: 12 };
+    v.position.set(pos.x, 0, pos.z);
+    v.rotation.y = Math.atan2(-pos.x, -pos.z); // face au centre de la map
     this.scene.add(v);
     this._volcano = v;
   }

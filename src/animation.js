@@ -73,10 +73,11 @@ export function deathExplode(model, t0, duration = 0.5) {
 
 // -- towers -----------------------------------------------------------------
 
-export function towerRecoil(tower, t0, power = 0.35, duration = 0.12) {
+export function towerRecoil(tower, t0, power = 0.35, duration = 0.12, now) {
   const p = tower.userData.parts;
   if (!p || !p.turret) return;
-  const k = Math.min(1, (performance.now() - t0) / 1000 / duration);
+  const t = now !== undefined ? now : performance.now(); // Point 10 : horloge de jeu si fournie
+  const k = Math.min(1, (t - t0) / 1000 / duration);
   const back = (1 - k) * (1 - k);
   p.turret.position.z = -back * power;
   if (p.barrel && tower.name === 'tower-mortar') {
@@ -185,8 +186,11 @@ export function bossSpawnMinions(boss, t0, duration = 1.0) {
 
 // -- projectiles --------------------------------------------------------------
 
-export function animateProjectile(proj, t0, from, to, duration, arc = 1.2) {
-  const k = Math.min(1, (performance.now() - t0) / 1000 / duration);
+// Point 10 : `now` (horloge, ms) est optionnel — par défaut temps réel. Les
+// projectiles de jeu passent game.gameTime (scalée par le speed).
+export function animateProjectile(proj, t0, from, to, duration, arc = 1.2, now) {
+  const t = now !== undefined ? now : performance.now();
+  const k = Math.min(1, (t - t0) / 1000 / duration);
   const pos = new THREE.Vector3().copy(from).lerp(to, k);
   pos.y += Math.sin(k * Math.PI) * arc;
   proj.position.copy(pos);

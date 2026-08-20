@@ -28,6 +28,18 @@ function distanceToPath(x, z) {
   return Math.sqrt(best);
 }
 
+// Progress le long du chemin le plus proche d'une position (x, z).
+function nearestProgress(x, z) {
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < SAMPLES; i++) {
+    const p = samples[i];
+    const dx = p.x - x, dz = p.z - z;
+    const d = dx * dx + dz * dz;
+    if (d < bestD) { bestD = d; best = i / (SAMPLES - 1); }
+  }
+  return best;
+}
+
 function snap(x, z) {
   const c = CONFIG.gridCell;
   return [Math.round(x / c) * c, Math.round(z / c) * c];
@@ -41,6 +53,9 @@ function isBuildable(x, z, type, occupied, propBlocks) {
   if (type === 'mine') {
     // Mines only make sense near the walking path.
     if (dPath > (CONFIG.minePathMax ?? 4.5)) return false;
+  } else if (type === 'barricade') {
+    // Barricade : posée SUR le chemin (à barr·PathMax du centre max).
+    if (dPath > (CONFIG.barricadePathMax ?? 1.5)) return false;
   } else if (dPath < CONFIG.pathClearance) {
     return false;
   }
@@ -67,6 +82,7 @@ export const Path = {
   tangentAt(progress) {
     return curve.getTangentAt(Math.min(1, Math.max(0, progress)));
   },
+  nearestProgress,
   distanceToPath,
   snap,
   isBuildable,

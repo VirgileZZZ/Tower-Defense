@@ -87,6 +87,13 @@ html, body {
   position: absolute; top: 4px; right: 6px; font-size: 9px; font-weight: 700;
   opacity: 0.5; background: rgba(0,0,0,0.3); border-radius: 3px; padding: 1px 4px;
 }
+.tower-card .tc-max {
+  display: none; position: absolute; left: 0; right: 0; bottom: 0;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.06em;
+  color: #ffd27a; background: rgba(200,120,20,0.35);
+  border-radius: 0 0 8px 8px; padding: 1px 0;
+}
+.tower-card.maxed { opacity: 0.55; cursor: not-allowed; border-color: rgba(255,190,90,0.5); }
 
 /* ------------------------------------------------------- tower panel */
 #towerpanel {
@@ -297,6 +304,14 @@ html, body {
 .pv-card:hover { transform: translateY(-2px); background: rgba(255,255,255,.08); box-shadow: 0 10px 26px rgba(0,0,0,.4); }
 .pv-card img, .pv-card > div { width: 100%; height: auto; border-radius: 10px; background: radial-gradient(ellipse at 50% 68%, #2b3a4c 0%, #18202b 75%); }
 .pv-name { font-weight: 700; color: #e8efff; text-align: center; }
+/* Point 6 : badge « équipée » sur les cartes de tours de l'inventaire */
+.eq-badge { display: block; margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px; text-align: center; background: rgba(255,255,255,.06); color: rgba(232,239,255,.55); border: 1px solid rgba(255,255,255,.10); }
+.pv-card.eq-on .eq-badge { background: rgba(143,224,170,.16); color: #8fe0a8; border-color: rgba(143,224,170,.5); }
+/* Bouton Équiper/Déséquiper du détail de tour */
+.equip-btn { margin: 10px 0 2px; width: 100%; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,180,80,.4); background: linear-gradient(160deg, rgba(255,170,60,.18), rgba(255,120,40,.10)); color: #ffd9a8; font-weight: 800; font-size: 14px; letter-spacing: .02em; cursor: pointer; transition: transform .12s, box-shadow .12s, background .12s; }
+.equip-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(255,150,40,.25); }
+.equip-btn .eq-ok { color: #8fe0a8; font-weight: 800; }
+.equip-full-note { color: #ff9d7a !important; font-weight: 700; }
 
 /* detail panel */
 #inv-detail { margin-top: 16px; padding: 14px 18px 16px; border-radius: 14px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); }
@@ -486,6 +501,7 @@ button.sk-chip:hover { transform: translateY(-1.5px); }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 0; flex-wrap: wrap; }
 .set-row + .set-row { border-top: 1px dashed rgba(255,255,255,0.08); }
 .set-row > span { font-size: 13.5px; color: var(--dim); white-space: nowrap; }
+.prog-status { white-space: normal !important; font-size: 12.5px !important; color: var(--dim); line-height: 1.4; max-width: 100%; }
 .set-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .set-btn { padding: 5px 12px; font-size: 13px; border-radius: 9px; cursor: pointer;
   background: rgba(255,255,255,0.04); color: var(--dim); border: 1px solid var(--line); transition: all .12s; }

@@ -40,6 +40,11 @@ export class Game {
     this.kills = 0;
     this.earned = 0;
     this.elapsed = 0;
+    // Point 10 : horloge de JEUX (ms) — avance de dt (déjà scalé par this.speed).
+    // Tous les timers de gameplay (cooldown de tir, gel/ralenti/petrify, cooldown boss,
+    // vol de projectile) vivent dessus. Le temps RÉEL (performance.now()) reste réservé
+    // aux animations cosmétiques (recoil, slam, mort), caméra, shake et UI.
+    this.gameTime = 0;
     this._lastCardMoney = -1; // last money value used to sync build-card affordability
 
     this.zombies = [];
@@ -184,12 +189,45 @@ export class Game {
     if (!item || this.saveData.ownedTowers.includes(id) || this.saveData.coins < item.price) return false;
     this.saveData.coins -= item.price;
     this.saveData.ownedTowers.push(id);
+    // Point 6 : une tour achetée n'est PAS équipée par défaut — le joueur la
+    // choisit dans l'équipage (Inventaire → tour → « Équiper »).
     if (this.sfx) this.sfx.buy();
     persistSave(this.saveData);
-    // newly unlocked tower appears on the build panel immediately
     if (this.ui && typeof this.ui._buildCards === 'function') { this.ui._buildCards(); this.ui.refreshCards(); }
     return true;
   }
+
+  // ---- Point 6 : équipage (max 5 tours jouables à la fois) -------------
+  isEquipped(key) {
+    return Array.isArray(this.saveData.equippedTowers) && this.saveData.equippedTowers.includes(key);
+  }
+
+  // Équipe une tour possédée. Retourne true si OK, false si équipée déjà / plein / non possédée.
+  equipTower(key) {
+    if (!this.saveData.ownedTowers.includes(key)) return false;
+    if (this.isEquipped(key)) return true;
+    if ((this.saveData.equippedTowers || []).length >= 5) return false; // équipage plein
+    this.saveData.equippedTowers.push(key);
+    persistSave(this.saveData);
+    if (this.ui && typeof this.ui._buildCards === 'function') { this.ui._buildCards(); this.ui.refreshCards(); }
+    return true;
+  }
+
+  unequipTower(key) {
+    if (!Array.isArray(this.saveData.equippedTowers)) return true;
+    this.saveData.equippedTowers = this.saveData.equippedTowers.filter((k) => k !== key);
+    // si la tour sélectionnée/déployée est déséquipée, on relâche la sélection
+    if (this.selectedType === key) this.selectedType = null;
+    if (this.selectedTower && this.selectedTower.type === key) {
+      this.selectedTower = null; this.hideTowerRange();
+      if (this.ui && this.ui.hideTowerPanel) this.ui.hideTowerPanel();
+    }
+    persistSave(this.saveData);
+    if (this.ui && typeof this.ui._buildCards === 'function') { this.ui._buildCards(); this.ui.refreshCards(); }
+    return true;
+  }
+
+  toggleEquip(key) { return this.isEquipped(key) ? this.unequipTower(key) : this.equipTower(key); }
 
   /** Buy "Niveau N" for a tower type in the shop — raises its upgrade cap. */
   buyTowerLevel(towerKey, level) {
@@ -363,6 +401,8 @@ export class Game {
     this.waveList = Array.isArray(list) ? list : [];
     this.infiniteMode = (this.saveData && this.saveData.lastMode === 'infini') || (!list.length);
     if (this.infiniteMode) { this.waveList = []; }
+    // Point 9 : nombre max de tours posées en même temps pour ce mode
+    this.maxTowers = def.maxTowers ?? 30;
 
     // clear entities
     for (const z of this.zombies) this.scene.remove(z.model);
@@ -374,6 +414,10 @@ export class Game {
     this.spawner = null;
     this.selectedType = null;
     this.selectedTower = null;
+    // Point 7 : on retire vraiment le cercle de portée + le panneau de tour à chaque
+    // reset (rejouer / nouvelle partie), sinon le _selRing restait affiché.
+    this.hideTowerRange();
+    if (this.ui && typeof this.ui.hideTowerPanel === 'function') this.ui.hideTowerPanel();
     this.occupied = new Set();
     this.kills = 0;
     this.earned = 0;
@@ -426,10 +470,23 @@ export class Game {
 
   // -- placement / selection --------------------------------------------
   canPlace(type, x, z) {
-    if (!this.saveData.ownedTowers.includes(type)) return false; // locked tower
+    // Point 6 : seule une tour ÉQUIPÉE (et possédée) est placeable
+    if (!this.isEquipped(type)) return false; // non équipée / non possédée
     const def = CONFIG.towers[type];
     if (this.money < def.cost) return false;
+    // Point 9 : limite globale du mode (ex. 30 en Débutant)
+    if (this.towers.length >= (this.maxTowers ?? 30)) return false;
+    // Point 9 : limite par type (ex. 3 Farm, 5 Sniper, 15 Gunner)
+    const typeMax = CONFIG.towerTypeMax[type];
+    if (typeMax && this.towers.filter((t) => t.type === type).length >= typeMax) return false;
     return this.path.isBuildable(x, z, type, this.occupied, this.propBlocks);
+  }
+
+  // Point 9 : infos de remplissage pour l'HUD / le panneau de placement
+  towerCountInfo() {
+    const byType = {};
+    for (const t of this.towers) byType[t.type] = (byType[t.type] || 0) + 1;
+    return { total: this.towers.length, max: (this.maxTowers ?? 30), byType };
   }
 
   towerRangeForType(type) {
@@ -439,7 +496,7 @@ export class Game {
   }
 
   selectType(key) {
-    if (key && !this.saveData.ownedTowers.includes(key)) return; // locked: buy in shop first
+    if (key && !this.isEquipped(key)) return; // non équipée : d'abord l'équiper (Inventaire)
     this.selectedType = (this.selectedType === key) ? null : key;
     this.selectedTower = null;
     this.ui.hideTowerPanel();
@@ -454,8 +511,8 @@ export class Game {
     }
     const def = CONFIG.towers[type];
     this.money -= def.cost;
-    // lock tower purchases: only owned towers can be built
-    if (!this.saveData.ownedTowers.includes(type)) { this.money += def.cost; return; }
+    // Point 6 : seule une tour équipée peut être construite
+    if (!this.isEquipped(type)) { this.money += def.cost; return; }
     const t = new Tower(type, x, z, this);
     if (this.saveData.towerSkin && this.saveData.towerSkin !== 'classic') applySkin(t.model, this.saveData.towerSkin);
     this.towers.push(t);
@@ -610,18 +667,21 @@ export class Game {
   }
 
   _spawnZombie(e = { type: 'walker', skin: 'default' }) {
+    let z;
     if (e.type === 'boss') {
       const bossKey = e.skin;
-      const z = new Zombie({ isBoss: true, bossKey, hpScale: this.currentWave.hp, spScale: this.currentWave.sp });
+      z = new Zombie({ isBoss: true, bossKey, hpScale: this.currentWave.hp, spScale: this.currentWave.sp });
+      // Pyro Lord : 5 s de préparation après le spawn avant la 1re boule
+      // (horloge de jeu — le délai est scalé par le speed comme tout le reste)
+      if (bossKey === 'pyrolord') z._atkT = this.gameTime;
       // Mini-boss : ne oneshotte PAS la maison — il inflige 1/2 des PV de base
       if (e.mini) z.baseDamage = Math.max(5, Math.round((this.modeDef ? this.modeDef.baseHP : 40) / 2));
-      z._game = this;
-      this._addZombie(z);
     } else {
-      const z = new Zombie({ type: e.type, skin: e.skin, hpScale: this.currentWave.hp, spScale: this.currentWave.sp });
-      z._game = this;
-      this._addZombie(z);
+      z = new Zombie({ type: e.type, skin: e.skin, hpScale: this.currentWave.hp, spScale: this.currentWave.sp });
     }
+    z._game = this;
+    this._addZombie(z);
+    return z;
   }
 
   _addZombie(z) {
@@ -633,11 +693,47 @@ export class Game {
   }
 
   spawnMinion(pos) {
-    // find progress nearest to this position (approx: use the point just before end)
+    // Bug corrigé : le minion sort sous TÈRE là où se trouve le Nécromant (pos),
+    // et plus près de la base (progress 0.9 codé en dur).
+    let prog = 0.9;
+    if (this.path && this.path.nearestProgress) prog = this.path.nearestProgress(pos.x, pos.z);
+    // juste un cran derrière le boss pour l'effet « émerge du sol »
+    prog = Math.min(0.98, Math.max(0.01, prog - 0.012));
     const z = new Zombie({ type: 'walker', skin: 'default', hpScale: this.currentWave ? this.currentWave.hp : 1, spScale: 1 });
     z._game = this;
-    z.progress = Math.max(0, 0.9);
+    z.progress = prog;
+    z._riseT0 = this.gameTime; // animation « sort de terre » (horloge de jeu)
+    z._riseDur = 600;
     this._addZombie(z);
+    if (this.vfx) this.vfx.earthSpawn(this.path.pointAt(prog));
+  }
+
+  // Nécromant : un monstre meurt → on lui distribue ce « cadavre » (la dernière
+  // source l'emporte ; chaque tour n'a qu'UNE résurrection en attente).
+  onMonsterKilled(z) {
+    for (const t of this.towers) {
+      if (!t.destroyed && t.type === 'necro') t.feedKill(z.maxHp, z.type);
+    }
+  }
+
+  // Squelette (troupe du Nécromant) : sort près de la BASE et marche en SENS
+  // INVERSE pour aller au-devant des ennemis. Se sacrifie (dégâts = PV).
+  spawnSkeleton({ maxHp = 30, srcType = 'walker', pct = 0.2 } = {}) {
+    const z = new Zombie({ type: 'skeleton', skin: 'default', hpScale: 1, spScale: 1 });
+    z._game = this;
+    z.skeleton = true;
+    z.reverse = true;
+    // PV = % des PV du monstre source (pct fourni par la tour, selon son niveau)
+    z.maxHp = Math.max(8, Math.round(maxHp * pct));
+    z.hp = z.maxHp;
+    z.baseSpeed = 2.0;    // plus rapide qu'un walker : il doit rattraper la horde
+    z.reward = 0;         // troupe : aucun récompense à sa mort
+    z.baseDamage = 0;     // n'inflige rien à la base (et ne oneshotte pas)
+    z.progress = 0.985;   // juste devant la base, sens inverse vers le spawn
+    z._riseT0 = this.gameTime; // animation « sort de terre » (horloge de jeu)
+    z._riseDur = 500;
+    this._addZombie(z);
+    if (this.vfx) this.vfx.earthSpawn(this.path.pointAt(0.98));
   }
 
   // -- wave / spawner update --------------------------------------------
@@ -658,6 +754,8 @@ export class Game {
   update(rawDt, now) {
     const dt = Math.min(0.05, Math.max(0, rawDt)) * this.speed;
     this.elapsed += dt;
+    // Point 10 : l'horloge de jeu avance au rythme du speed (dt déjà scalé).
+    this.gameTime += dt * 1000;
 
     // Cap visible corpses (Paramètres, défaut 20) pour éviter un à-coup de
     // performance : les plus vieux cadavres terminent leur mort instantanément.
@@ -683,14 +781,14 @@ export class Game {
       }
     }
 
-    // 1. spawn
-    this.updateSpawner(now, dt);
+    // 1. spawn — cadence des spawns scalée par le speed (gameTime)
+    this.updateSpawner(this.gameTime, dt);
 
-    // 2. zombies
-    for (const z of this.zombies) z.update(dt, this, now);
+    // 2. zombies — `now` de gameplay = gameTime (scalé) ; `now` réel en 4e arg pour les anims
+    for (const z of this.zombies) z.update(dt, this, this.gameTime, now);
 
-    // 3. towers
-    for (const t of this.towers) t.update(dt, this, now);
+    // 3. tours — idem : gameTime pour cooldown/gel, now réel pour recoil
+    for (const t of this.towers) t.update(dt, this, this.gameTime, now);
 
     // 3b. remove one-shot towers that have detonated (mines)
     const deadTowers = this.towers.filter((t) => t.dead);
@@ -736,7 +834,7 @@ export class Game {
         z.dispose(this);
       } else if (z.dead && !z._deathDone) {
         // grant reward once when death animation finishes; do it at startDeath
-      } else if (z.reachedBase) {
+      } else if (z.reachedBase || z.reachedStart) {
         this.zombies.splice(i, 1);
         this.vfx.removeHpBar(z);
         z.dispose(this);
@@ -876,9 +974,11 @@ export class Game {
     if (this.currentWave && this.spawner === null) {
       const anyAlive = this.zombies.some((z) => z.alive);
       if (!anyAlive) {
-        if (!this.infiniteMode && this.waveIndex >= this.totalWavesNow()) { if (this.sfx) this.sfx.win(); this._win(); }
-        else if (this.infiniteMode) { /* la partie continue indéfiniment */ 0; }
-        else if (!this.autoWaveReady) {
+        if (!this.infiniteMode && this.waveIndex >= this.totalWavesNow()) {
+          if (this.sfx) this.sfx.win(); this._win();
+        } else if (!this.autoWaveReady) {
+          // Mode fini : vague suivante dans la liste. Mode Infini : même mécanisme
+          // (autoWaveReady) — _beginWave() fabrique alors une vague infinie (n° croissant).
           this.autoWaveReady = true;
           this.autoWaveT0 = now;
         }

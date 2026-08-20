@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createRenderer, createCamera, createLights, createGround, createPathRibbon, onResize } from './scene.js';
 import { createBaseModel, applySkin } from './assets.js';
-import { loadSave } from './save.js';
+import { loadSave, loadProgressFromFile, persistSave } from './save.js';
 import { Path } from './path.js';
 import { CONFIG, terrainHeight, DIFFICULTIES } from './config.js';
 import { Game } from './game.js';
@@ -75,6 +75,18 @@ window.__game = game; // debug/inspection handle
 window.__CONFIG = CONFIG;
 window.__DIFFICULTIES = DIFFICULTIES; // utilisé par le menu (boutons de difficulté + verrouillages)
 window.__terrainHeight = terrainHeight; // debug/inspection handle
+
+// progress.json : si un fichier est lié, il est la source de vérité à l'allumage.
+// (Récupère la progression si le brouillon localStorage a été effacé.)
+loadProgressFromFile().then((data) => {
+  if (!data) return;
+  if (JSON.stringify(data) === JSON.stringify(game.saveData)) return; // déjà à jour
+  game.saveData = data;
+  if (data.baseSkin && data.baseSkin !== 'classic') applySkin(base, data.baseSkin);
+  else applySkin(base, 'classic');
+  game.applySettings(false);
+  persistSave(data); // re-synchronise le brouillon localStorage
+});
 
 // ---------------------------------------------------------------------------
 // Main loop

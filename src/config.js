@@ -137,25 +137,25 @@ export function terrainHeight(x, z, waypoints = CONFIG.waypoints) {
 const BOSS_ORDER = ['brute','stalker','frostking','pyrolord','abomination','golem','runner','regenerator','titan','wraith'];
 
 export const DIFFICULTIES = {
-  debutant: { key: 'debutant', name: 'Débutant',   waves: 25, baseHP: 40, startMoney: 350,
+  debutant: { key: 'debutant', name: 'Débutant',   waves: 25, baseHP: 40, startMoney: 350, maxTowers: 30,
               hpK: [0.08, 0.0016], spK: 0.006, scale: { walker: 0.7, fast: 0.7, tank: 0.6 },
               themeIdx: 3, finalBoss: 'brute',       // boss « débutant » : le plus simple de la série
               reward: 500, unlock: null },            // +500 pièces à la victoire (bonus mode)
-  moyen:    { key: 'moyen', name: 'Moyen', waves: 30, baseHP: 40, startMoney: 280,
+  moyen:    { key: 'moyen', name: 'Moyen', waves: 30, baseHP: 40, startMoney: 280, maxTowers: 25,
               hpK: [0.105, 0.0026], spK: 0.009, scale: { walker: 0.85, fast: 0.85, tank: 0.75 },
               themeIdx: 1, finalBoss: 'abomination', // boss moyen : grosse brute régénératrice
               reward: 1000, unlock: 'debutant' },     // +1000 pièces — débloqué quand Débutant est gagné
-  avance:   { key: 'avance', name: 'Avancé', waves: 35, baseHP: 40, startMoney: 220,
+  avance:   { key: 'avance', name: 'Avancé', waves: 35, baseHP: 40, startMoney: 220, maxTowers: 20,
               hpK: [0.135, 0.004], spK: 0.012, scale: { walker: 1.0, fast: 1.0, tank: 1.0 },
               themeIdx: 2, finalBoss: 'titan',         // boss avancé : le gros titan à 2 vies
               reward: 2500, unlock: 'moyen' },         // +2500 pièces — débloqué quand Moyen est gagné
-  impossible:{ key: 'impossible', name: 'Impossible', waves: 40, baseHP: 35, startMoney: 180,
+  impossible:{ key: 'impossible', name: 'Impossible', waves: 40, baseHP: 35, startMoney: 180, maxTowers: 15,
               hpK: [0.17, 0.006], spK: 0.016, scale: { walker: 1.25, fast: 1.2, tank: 1.4 },
               themeIdx: 5, finalBoss: 'wraith',        // boss impossible : le fantôme qui phase
               reward: 5000, unlock: 'avance' },        // +5000 pièces
 };
 // Mode Infini : pas de fin de partie → pas de récompense de mode (les pièces viennent des kills)
-DIFFICULTIES.infini = { key: 'infini', name: 'Infini', waves: 0, baseHP: 40, startMoney: 200,
+DIFFICULTIES.infini = { key: 'infini', name: 'Infini', waves: 0, baseHP: 40, startMoney: 200, maxTowers: 30,
                         reward: 0, unlock: null, infinite: true };
 export const MODES = ['debutant', 'moyen', 'avance', 'impossible'];
 export const MODES_ORDER = ['debutant', 'moyen', 'avance', 'impossible', 'infini'];
@@ -260,6 +260,7 @@ export const CONFIG = {
   pathWidth: 3.0,
   pathClearance: 1.2,       // min distance from path center to place non-mine towers
   minePathMax: 4.5,         // mines must be this close to the path to be useful
+  barricadePathMax: 1.5,    // barricades sit ON the path (within this of center)
   gridCell: 1.0,
 
   // Camera / lighting / fog -------------------------------------------
@@ -274,6 +275,9 @@ export const CONFIG = {
     walker: { hp: 40,  speed: 1.6, reward: 8,  damage: 2, armor: 0,   radius: 0.5, label: 'Walker' },
     fast:   { hp: 30,  speed: 2.6, reward: 10, damage: 2, armor: 0,   radius: 0.45, label: 'Fast' },
     tank:   { hp: 120, speed: 1.0, reward: 18, damage: 5, armor: 0.15, radius: 0.7, label: 'Tank' },
+    // Squelette (troupe du Nécromant) : valeurs de base — écrasées au spawn
+    // (PV = % des PV du monstre source, dégâts = PV, marche en sens inverse).
+    skeleton: { hp: 30, speed: 1.4, reward: 0, damage: 0, armor: 0, radius: 0.45, label: 'Squelette' },
   },
 
   // Elemental variant modifiers (applied on top of base type) ---------
@@ -341,14 +345,49 @@ export const CONFIG = {
       incomeBase: 7, tickEvery: 6,
       upgrade: { income: 4 }, // + pieces / cycle par niveau
     },
+    // Barricade (≈ Spikes/Barrel de TDS) : posée SUR le chemin, elle encaisse les
+    // zombies. Un zombie bloqué « grignote » la barricade en infligeant un montant
+    // = ses PV / seconde. Elle retarde la horde le temps de la détruire.
+    barricade: {
+      key: 'barricade', name: 'Barricade', cost: 40, kind: 'barricade',
+      hp: 500,          // PV de base (Lv1)
+      block: 2.4,       // distance (monde) à laquelle un zombie se cale + attaque
+      radius: 1.3,      // empreinte (pour l'anneau fantôme)
+      upgrade: { hp: 350, block: 0.2 },
+    },
+    // Nécromant (troupe) : ressuscite les monstres tués en SQUELETTES qui
+    // marchent EN SENS INVERSE depuis la base pour aller au-devant des ennemis.
+    // Le squelette « se sacrifie » (dégâts = PV). PV = % des PV du monstre source
+    // (20 % au Lv1 → 65 % au Lv5). 3 max posées.
+    necro: {
+      key: 'necro', name: 'Nécromant', cost: 150, kind: 'necro',
+      range: 3,          // anneau d'empreinte (pas une vraie portée d'attaque)
+      cooldown: 8,       // s entre deux résurrections (Lv1)
+      upgrade: { cooldown: -1 }, // −1 s / niveau (Lv5 = 4 s)
+    },
   },
   towerMaxLevel: 5,
   towerStartCap: 2, // ceiling au départ — les niveaux 3 à 5 se débloquent dans la Boutique
+  // Point 9 : nombre max de tours POSÉES SIMULTANÉMENT de chaque type
+  // (en plus de la limite globale du mode — voir DIFFICULTIES.maxTowers)
+  towerTypeMax: {
+    gunner: 15,  // demandé : 15 max
+    sniper: 5,   // demandé : 5 max
+    farm: 3,     // demandé : 3 max
+    mine: 10,    // mines pas chères & à usage unique → on en pose beaucoup
+    frost: 6,
+    flame: 4,
+    mortar: 5,
+    shock: 3,    // point 8 : 3 Électro max posées en même temps
+    gatling: 4,
+    barricade: 12, // barricades : pas chères, on en aligne plusieurs sur le chemin
+    necro: 3,      // demandé : 3 Nécromants max posés
+  },
   damageGrowth: 1.36,   // dégâts/DPS ×1,36 par niveau — rééquilibré contre la courbe d'HP adoucie
   settingsDefault: { particles: 'moyen', corpses: 20, sound: true }, // menu → Paramètres
 
   // Build order shown in the panel (left -> right) --------------------
-  towerOrder: ['gunner', 'frost', 'flame', 'sniper', 'mortar', 'mine', 'shock', 'gatling', 'farm'],
+  towerOrder: ['gunner', 'frost', 'flame', 'sniper', 'mortar', 'mine', 'shock', 'gatling', 'farm', 'barricade', 'necro'],
 
   // 100 progressive waves (generated). A boss appears every 10th wave.
   // (vagues maintenant par mode de difficulté — voir WAVES_BY_MODE / DIFFICULTIES)

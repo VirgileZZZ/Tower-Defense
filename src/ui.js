@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CONFIG, DIFFICULTIES, MODES_ORDER, terrainHeight } from './config.js';
-import { SHOP, persistSave } from './save.js';
+import { SHOP, persistSave, getProgressStatus, linkProgressFile, unlinkProgressFile, exportProgressFile, importProgressFile, fsSupported } from './save.js';
 import { createZombieModel, createBossModel, createTowerModel, createBaseModel, createProp, createVolcano, applySkin } from './assets.js';
 import { createGround, createPathRibbon } from './scene.js';
 
@@ -11,6 +11,8 @@ import { createGround, createPathRibbon } from './scene.js';
 const TOWER_COLORS = {
   gunner: 0x6a7a6a, frost: 0x6a89a8, flame: 0x8a4a3a,
   sniper: 0x4a5560, mortar: 0x4a5a44, mine: 0x6a6a4a,
+  shock: 0x2f8f86, gatling: 0x6b7a63, farm: 0x4a7a3a,
+  barricade: 0x8a6b45, necro: 0x4a7a4a,
 };
 // Clean, non-emoji SVG icons (stroke = currentColor so they inherit the card's text color)
 const svgAttrs = 'viewBox="0 0 24 24" width="70%" height="70%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
@@ -27,6 +29,16 @@ const TOWER_ICONS = {
   mortar: `<svg ${svgAttrs}><path d="M5 19 C 7 11 14 7.5 20.5 5.5" stroke-dasharray="2.5 2.5"/><circle cx="5" cy="19" r="2.4" fill="currentColor" stroke="none"/><path d="M20.5 5.5 l-3 0.4 M20.5 5.5 l-0.6 3"/></svg>`,
   // Mine: spiky sphere
   mine: `<svg ${svgAttrs}><circle cx="12" cy="12" r="5"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.9" y1="4.9" x2="7" y2="7"/><line x1="17" y1="17" x2="19.1" y2="19.1"/><line x1="4.9" y1="19.1" x2="7" y2="17"/><line x1="17" y1="7" x2="19.1" y2="4.9"/></svg>`,
+  // Shock: lightning bolt
+  shock: `<svg ${svgAttrs}><path d="M13 2 L5 13 L11 13 L9 22 L19 9 L13 9 Z"/></svg>`,
+  // Gatling: rotating multi-barrel hub
+  gatling: `<svg ${svgAttrs}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="12" y1="3" x2="12" y2="8"/><line x1="4.2" y1="16.5" x2="8.6" y2="14.2"/><line x1="19.8" y1="16.5" x2="15.4" y2="14.2"/></svg>`,
+  // Farm: sprout in soil
+  farm: `<svg ${svgAttrs}><path d="M12 21 V12"/><path d="M12 13 C 12 9 9 8 6 8 C 6 12 9 13 12 13 Z"/><path d="M12 11 C 12 8 15 7 18 7 C 18 10.5 15 12 12 11 Z"/><path d="M4 21 H20"/></svg>`,
+  // Barricade: spiked palisade
+  barricade: `<svg ${svgAttrs}><path d="M4 21 L4 13 L8 9 L12 13 L16 9 L20 13 L20 21 Z"/><line x1="12" y1="9" x2="12" y2="4"/><line x1="8" y1="9" x2="8" y2="6"/><line x1="16" y1="9" x2="16" y2="6"/></svg>`,
+  // Necromancer: skull
+  necro: `<svg ${svgAttrs}><path d="M12 3 C 7.6 3 5 5.8 5 9.8 C 5 12.3 6.4 14.3 8 15.3 L8 19 L10.5 19 L10.5 21 L13.5 21 L13.5 19 L16 19 L16 15.3 C 17.6 14.3 19 12.3 19 9.8 C 19 5.8 16.4 3 12 3 Z"/><circle cx="9.5" cy="10.3" r="1.3" fill="currentColor" stroke="none"/><circle cx="14.5" cy="10.3" r="1.3" fill="currentColor" stroke="none"/></svg>`,
 };
 
 export class UI {
@@ -35,6 +47,7 @@ export class UI {
     this.moneyEl = document.getElementById('hud-money');
     this.waveEl = document.getElementById('hud-wave');
     this.zombiesEl = document.getElementById('hud-zombies');
+    this.towersEl = document.getElementById('hud-towers');
     this.basebar = document.getElementById('hud-basebar');
     this.basefill = document.getElementById('hud-basefill');
     this.hud = document.getElementById('hud');
@@ -66,9 +79,13 @@ export class UI {
 
   // Build panel only shows towers the player actually owns (locked ones
   // appear in the shop / inventory instead).
+  // Point 6 : le panneau de placement n'affiche que les tours ÉQUIPÉES (max 5),
+  // possédées et connues.
   _ownedTowerKeys() {
-    const owned = this.game.saveData ? this.game.saveData.ownedTowers : CONFIG.towerOrder;
-    return CONFIG.towerOrder.filter((k) => owned.includes(k));
+    const s = this.game.saveData;
+    const equipped = s && Array.isArray(s.equippedTowers) ? s.equippedTowers : [];
+    const owned = s && Array.isArray(s.ownedTowers) ? s.ownedTowers : ['gunner'];
+    return CONFIG.towerOrder.filter((k) => equipped.includes(k) && owned.includes(k)).slice(0, 5);
   }
 
   _buildCards() {
@@ -93,7 +110,10 @@ export class UI {
       const k = document.createElement('span');
       k.className = 'tc-key';
       k.textContent = String(i + 1);
-      card.append(sw, name, cost, k);
+      const maxBadge = document.createElement('div');
+      maxBadge.className = 'tc-max';
+      maxBadge.textContent = 'MAX';
+      card.append(sw, name, cost, k, maxBadge);
       card.addEventListener('click', () => this.game.selectType(key));
       this.buildpanel.appendChild(card);
       this.cards[key] = card;
@@ -144,6 +164,10 @@ export class UI {
     const alive = g.zombies.filter((z) => z.alive).length;
     const pending = g.spawner ? g.spawner.remaining : 0;
     this.zombiesEl.textContent = alive + (pending ? '+' + pending : '');
+    if (this.towersEl) {
+      const info = g.towerCountInfo();
+      this.towersEl.textContent = info.total + ' / ' + info.max;
+    }
     const maxHp = (g.modeDef && g.modeDef.baseHP) || CONFIG.baseHP;
     const pct = Math.max(0, g.baseHP / maxHp);
     this.basefill.style.width = (pct * 100).toFixed(1) + '%';
@@ -163,12 +187,19 @@ export class UI {
 
   refreshCards() {
     const g = this.game;
+    const info = g.towerCountInfo ? g.towerCountInfo() : { total: 0, max: 1e9, byType: {} };
     for (const key of Object.keys(this.cards)) {
       const def = CONFIG.towers[key];
       const card = this.cards[key];
       const afford = g.money >= def.cost;
-      card.classList.toggle('disabled', !afford);
+      // Point 9 : type à sa limite (ou limite globale du mode atteinte)
+      const typeMax = CONFIG.towerTypeMax[key];
+      const atMax = (info.byType[key] || 0) >= typeMax || info.total >= info.max;
+      card.classList.toggle('disabled', !afford && !atMax);
+      card.classList.toggle('maxed', !!atMax);
       card.classList.toggle('selected', g.selectedType === key);
+      const badge = card.querySelector('.tc-max');
+      if (badge) badge.style.display = atMax ? '' : 'none';
     }
   }
 
@@ -196,9 +227,15 @@ export class UI {
     const rows = [];
     if (d.kind === 'continuous') rows.push(['Damage/s', tower.statDamage().toFixed(0)]);
     else if (d.kind === 'slow') rows.push(['Slow', (tower.statSlowPct() * 100).toFixed(0) + '%', 'for ' + tower.statSlowDur().toFixed(1) + 's']);
+    else if (d.kind === 'barricade') rows.push(['Intégrité (PV)', Math.max(0, Math.round(tower.hp)) + ' / ' + Math.round(tower.maxHp)]);
+    else if (d.kind === 'necro') {
+      rows.push(['PV du squelette', Math.round(tower.statNecroPct() * 100) + ' % du monstre source']);
+      const itv = Math.max(2, d.cooldown + (tower.level - 1) * (d.upgrade.cooldown ?? 0));
+      rows.push(['Cadence', itv.toFixed(0) + ' s / squelette']);
+    }
     else rows.push(['Damage', tower.statDamage().toFixed(0)]);
-    if (d.range) rows.push(['Range', tower.range.toFixed(1)]);
-    if (d.cooldown) rows.push(['Rate', (1 / Math.max(0.01, tower.statCooldown())).toFixed(1) + '/s']);
+    if (d.range && d.kind !== 'necro') rows.push(['Range', tower.range.toFixed(1)]);
+    if (d.cooldown && d.kind !== 'necro') rows.push(['Rate', (1 / Math.max(0.01, tower.statCooldown())).toFixed(1) + '/s']);
     if (d.kind === 'mine') rows.push(['Blast radius', tower.range.toFixed(1)]);
     const up = tower.upgradeCost();
     rows.push(['Sell value', tower.sellValue() + 'g']);
@@ -366,6 +403,13 @@ export class UI {
       <div class="set-row"><span>Particules</span><div class="set-btns" data-setgrp="particles">${['low', 'moyen', 'max'].map((q) => `<button class="set-btn" data-q="${q}">${q === 'low' ? 'Faible' : q}</button>`).join('')}</div></div>
       <div class="set-row"><span>Cadavres visibles</span><div class="set-btns" data-setgrp="corpses">${[5, 10, 20, 40, 80].map((n) => `<button class="set-btn" data-n="${n}">${n}</button>`).join('')}</div></div>
       <div class="set-row"><span>Son</span><div class="set-btns" data-setgrp="sound"><button class="set-btn">On</button><button class="set-btn">Off</button></div></div>
+      <div class="set-row"><span>Sauvegarde <b>progress.json</b></span><div class="set-btns" data-setgrp="progress">
+        <button class="set-btn" data-prog="link">🔗 Lier</button>
+        <button class="set-btn" data-prog="export">⬇️ Exporter</button>
+        <button class="set-btn" data-prog="import">⬆️ Importer</button>
+        <button class="set-btn" data-prog="unlink">Délier</button>
+      </div></div>
+      <div class="set-row"><span class="prog-status" id="prog-status">…</span></div>
       <div class="set-row reset-row"><button id="settings-reset" class="set-btn danger">⟳ Réinitialiser la progression (tout effacer)</button></div>`;
   }
 
@@ -407,8 +451,50 @@ export class UI {
     root.querySelector('#settings-reset').addEventListener('click', () => {
       if (confirm('Réinitialiser toute la progression ?\n(Pièces, tours, niveaux, skins, modes… tout repart de zéro)')) {
         g.resetProgress();
+        this._refreshProgressUI(root);
       }
     });
+    this._bindProgress(root);
+  }
+
+  // -- Sauvegarde progress.json (File System Access API + export/import) -----
+  async _refreshProgressUI(root) {
+    const el = root && root.querySelector ? root.querySelector('#prog-status') : document.querySelector('#prog-status');
+    if (!el) return;
+    const st = await getProgressStatus();
+    if (!st.supported) { el.textContent = 'progress.json : non pris en charge ici — utilisez Exporter / Importer.'; return; }
+    el.textContent = st.linked
+      ? `progress.json lié : ${st.name} — sauvegarde auto, jamais effacé sauf bouton Reset.`
+      : 'Aucun progress.json lié. Cliquez sur « Lier » pour choisir le fichier (1 seule fois).';
+  }
+
+  _bindProgress(root) {
+    const g = this.game;
+    this._refreshProgressUI(root);
+    root.querySelectorAll('[data-prog]').forEach((b) => b.addEventListener('click', async () => {
+      const act = b.dataset.prog;
+      if (act === 'link') {
+        const r = await linkProgressFile(g.saveData);
+        if (r.ok) { this._toast('progress.json lié : ' + r.name); }
+        else if (r.err === 'unsupported') { this._toast('Non pris en charge : utilisez Exporter / Importer.'); }
+        else if (r.err !== 'cancel') { this._toast('Impossible de lier progress.json.'); }
+        this._refreshProgressUI(root);
+      } else if (act === 'export') {
+        if (exportProgressFile(g.saveData)) this._toast('progress.json exporté (téléchargé).');
+      } else if (act === 'import') {
+        const r = await importProgressFile();
+        if (r.ok) {
+          g.saveData = r.data;
+          g.applySettings(false);
+          persistSave(g.saveData);
+          this._toast('progress.json importé.');
+        } else if (r.err === 'invalid') { this._toast('Fichier progress.json invalide.'); }
+      } else if (act === 'unlink') {
+        await unlinkProgressFile();
+        this._toast('progress.json délié (le brouillon local reste).');
+        this._refreshProgressUI(root);
+      }
+    }));
   }
 
   // -- Miniatures 3D des modes : VRAI terrain, vrai chemin, props du thème,
@@ -773,6 +859,15 @@ export class UI {
     const mul = Math.pow(CONFIG.damageGrowth ?? 1.32, n);
     if (def.kind === 'continuous') {
       rows.push(`DPS : <b>${Math.round((def.dps ?? 0) * mul)}</b>`);
+    } else if (def.kind === 'barricade') {
+      const hp = Math.round((def.hp ?? 0) + n * (u.hp ?? 0));
+      rows.push(`Intégrité (PV) : <b>${hp}</b>`);
+      rows.push(`Les zombies la grignotent (dégâts = leurs PV/s)`);
+    } else if (def.kind === 'necro') {
+      const pct = Math.round((0.20 + n * ((0.65 - 0.20) / 4)) * 100);
+      const itv = Math.max(2, (def.cooldown ?? 0) + n * (u.cooldown ?? 0));
+      rows.push(`PV du squelette : <b>${pct} %</b> du monstre source`);
+      rows.push(`Rituel : un squelette toutes les <b>${itv} s</b>`);
     } else if (def.kind === 'mine') {
       const dmg = Math.round((def.damage ?? 0) * mul);
       const rad = (def.radius ?? 0) + n * (u.radius ?? 0);
@@ -783,7 +878,7 @@ export class UI {
       const rate = def.cooldown ? ` · Cadence : ${(1 / Math.max(0.01, def.cooldown)).toFixed(1)}/s` : '';
       rows.push(`Dégâts : <b>${dmg}</b>${rate}`);
     }
-    if (def.range) rows.push(`Portée : ${((def.range ?? 0) + n * (u.range ?? 0)).toFixed(1)} m`);
+    if (def.range && def.kind !== 'necro') rows.push(`Portée : ${((def.range ?? 0) + n * (u.range ?? 0)).toFixed(1)} m`);
     if (def.splash) rows.push(`Éclat de zone : ${(def.splash + n * (u.splash ?? 0)).toFixed(1)} m`);
     if (def.kind === 'slow') {
       const pct = Math.min(68, def.slowPct * 100 + n * ((u.slowPct ?? 0) * 100));
@@ -801,11 +896,15 @@ export class UI {
     this.screenSub.textContent = '';
 
     // Your towers (owned only): 3D model + name. Click => detail.
-    const towerCards = CONFIG.towerOrder.filter((k) => d.ownedTowers.includes(k)).map((key) => `
-      <button class="pv-card" data-inv="t:${key}">
+    const towerCards = CONFIG.towerOrder.filter((k) => d.ownedTowers.includes(k)).map((key) => {
+      const eq = d.equippedTowers.includes(key);
+      return `
+      <button class="pv-card${eq ? ' eq-on' : ''}" data-inv="t:${key}">
         ${this._pvImg('t:' + key, 150)}
         <span class="pv-name">${CONFIG.towers[key].name}</span>
-      </button>`).join('');
+        <span class="eq-badge" title="${eq ? 'Présente dans votre équipage' : 'Non équipée — impossible à poser'}">${eq ? '⚔ Équipée' : 'Non équipée'}</span>
+      </button>`;
+    }).join('');
 
     // La maison de base — détail avec son bouton Skins (mêmes mini-rectangles)
     const houseCard = `
@@ -945,11 +1044,31 @@ export class UI {
               <div class="det-stats">${rows}</div>
               <button type="button" id="skin-toggle" class="skin-toggle-btn">🎨 Skins (${ownedCount}/${towerSkins.length} acquis) ▾</button>
               <div id="inv-skmini" class="sk-mini hidden">${chipsHtml}</div>
-              <p class="det-note">Coût de construction : ${def.cost}g — ${d.ownedTowers.includes(k2) ? '<b style="color:#8fe0a8">Débloquée ✓</b>' : ''}</p>
+              <button type="button" id="equip-toggle" class="equip-btn">${d.equippedTowers.includes(k2) ? '<span class="eq-ok">⚔ Dans l’équipage ✓</span> Déséquiper' : '⚔ Équiper pour jouer'}</button>
+              <p class="det-note">Coût de construction : ${def.cost}g — ${d.ownedTowers.includes(k2) ? '<b style="color:#8fe0a8">Débloquée ✓</b>' : ''} · Équipage ${d.equippedTowers.length}/5</p>
             </div>
           </div>`;
         det.querySelectorAll('button[data-lv]').forEach((b) => {
           b.addEventListener('click', () => renderTowerDetail(k2, +b.dataset.lv));
+        });
+        // Point 6 : bouton Équiper / Déséquiper (équipage max 5)
+        det.querySelector('#equip-toggle')?.addEventListener('click', () => {
+          const wasEq = g.isEquipped(k2);
+          g.toggleEquip(k2);
+          const nowEq = g.isEquipped(k2);
+          if (!wasEq && !nowEq) {
+            // équipage plein (5/5) → feedback sans re-rendu
+            let note = det.querySelector('.equip-full-note');
+            if (!note) { note = document.createElement('p'); note.className = 'det-note equip-full-note'; det.querySelector('.det-info').appendChild(note); }
+            note.textContent = '⚠ Équipage plein (5/5) — déséquipez d’abord une autre tour.';
+            if (this.sfx && this.sfx.error) this.sfx.error();
+            return;
+          }
+          this.showInventory();
+          requestAnimationFrame(() => {
+            const card2 = this.screenBody.querySelector(`[data-inv="t:${k2}"]`);
+            if (card2) card2.click();
+          });
         });
         // Re-binding à CHAQUE rendu : les boutons sont recréés à chaque
         // changement de niveau, un listener unique (lié au 1er rendu) serait
@@ -1130,6 +1249,10 @@ export class UI {
     this.refreshCards();
   }
 
+  _toast(text) {
+    if (typeof this.showBanner === 'function') this.showBanner(text);
+  }
+
   showBanner(text) {
     this.banner.textContent = text;
     this.banner.classList.remove('show');
@@ -1146,6 +1269,8 @@ const SHOP_TOWER_DESC = {
   shock:  'Éclair instantané qui SAUTE entre 3 cibles (dégâts en baisse à chaque saut) : parfait sur les groupes.',
   gatling: 'Minigun à cadence folle — près de 12 impacts/s, un nuage de plomb très efficace en milieu de carte.',
   farm:   'Tour de trésorerie : rapporte des pièces toutes les 6 s. Elle ne se défend pas, placez-la en sécurité !',
+  barricade: 'Palisade épineuse posée SUR le chemin : les zombies bloqués la grignotent (dégâts = leurs PV/s). Un mur bon marché pour gagner du temps !',
+  necro:   'Ressuscite les monstres en squelettes qui partent au-devant de la horde et se sacrifient (3 max posés).',
 };
 
 const TOWER_DESC = {
@@ -1158,6 +1283,8 @@ const TOWER_DESC = {
   shock:  'Bobine de Tesla : foudre instantanée sans projectile. L\u2019éclair saute ensuite sur 2 cibles en plus (60 % puis 35 % des dégâts) : ≈ 180 % des dégâts sur 3 zombies groupés. La montée de niveau raccourcit la cadence et élargit la portée.',
   gatling: 'Minigun rotatif : environ 12 projectiles par seconde (≈ 38 dégâts/s) sur une moyenne portée. La reine des hordes — elle rafale jusqu\u2019au dernier zombie d\u2019un groupe.',
   farm:   'Économie pure : rapporte +7 pièces toutes les 6 s, et le rendement augmente à chaque niveau. Aucune attaque — construisez-la près de la maison, loin du chemin.',
+  barricade: 'Palisade de bois épineux à poser DIRECTEMENT SUR le chemin. Les zombies qui s\u2019y heurtent restent bloqués et la « grignotent » (dégâts infligés = leurs propres PV / seconde) : un mur bon marché et solide pour arrêter la horde le temps que vos tours fassent leur travail. Améliorez-la pour énormément de PV. Jusqu’à 12 barrées posées à la fois.',
+  necro:   'Le Seigneur des Morts. À chaque monstre tué, le Nécromant le ressuscite en SQUELETTE près de votre base : le squelette marche en SENS INVERSE pour aller au-devant des ennemis et se sacrifie en barrière humaine (ses dégâts = ses PV). La force du squelette suit votre tour — 20 % des PV du monstre source au niveau 1, jusqu’à 65 % au niveau 5. Le rituel est lent (8 s, plus rapide en montant de niveau) et ne se déclenche que s’il reste des ennemis à repousser. Vous n’en poserez jamais plus de 3.',
 };
 
 const BOSS_ABILITY = {

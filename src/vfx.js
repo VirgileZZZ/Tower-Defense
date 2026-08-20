@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CONFIG } from './config.js';
 import { createExplosionModel, createIceMistRing, createMuzzleFlashModel } from './assets.js';
 import { animateExplosion } from './animation.js';
 
@@ -74,6 +75,46 @@ export class VFX {
     this.effects.push({
       obj: r, t0: performance.now(), dur: 700,
       step: (o, k) => { o.scale.setScalar(0.3 + k * 1.4); o.material.opacity = 0.85 * (1 - k); },
+    });
+  }
+
+  // Nécromant : le minion sort de sous terre — onde de choc terre + bourgeons de terre
+  earthSpawn(pos) {
+    const y = CONFIG.pathHeight ?? 0;
+    const geo = new THREE.RingGeometry(0.9, 1.25, 28);
+    const m = new THREE.MeshBasicMaterial({ color: 0x8a6a3a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
+    const r = new THREE.Mesh(geo, m);
+    r.rotation.x = -Math.PI / 2;
+    r.position.set(pos.x, y + 0.05, pos.z);
+    this.scene.add(r);
+    this.effects.push({ obj: r, t0: performance.now(), dur: 650, step: (o, k) => { o.scale.setScalar(0.3 + k * 1.6); o.material.opacity = 0.9 * (1 - k); } });
+    const N = this.quality === 'low' ? 8 : this.quality === 'max' ? 26 : 16;
+    const g = new THREE.BufferGeometry();
+    const arr = new Float32Array(N * 3);
+    const seeds = [];
+    for (let i = 0; i < N; i++) {
+      arr[i * 3] = pos.x; arr[i * 3 + 1] = y; arr[i * 3 + 2] = pos.z;
+      const a = Math.random() * Math.PI * 2;
+      seeds.push({ a, up: 1.4 + Math.random() * 1.6, rad: 0.2 + Math.random() * 0.6 });
+    }
+    g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    const pm = new THREE.PointsMaterial({ color: 0x9c7a44, size: 0.16, transparent: true, opacity: 0.95, depthWrite: false });
+    const pts = new THREE.Points(g, pm);
+    this.scene.add(pts);
+    this.effects.push({
+      obj: pts, t0: performance.now(), dur: 650,
+      step: (o, k) => {
+        const pa = o.geometry.attributes.position.array;
+        for (let i = 0; i < N; i++) {
+          const s = seeds[i];
+          const rr = s.rad * (0.3 + k);
+          pa[i * 3] = pos.x + Math.cos(s.a) * rr;
+          pa[i * 3 + 1] = y + Math.sin(k * Math.PI) * s.up; // monte puis retombe
+          pa[i * 3 + 2] = pos.z + Math.sin(s.a) * rr;
+        }
+        o.geometry.attributes.position.needsUpdate = true;
+        pm.opacity = 0.95 * (1 - k);
+      },
     });
   }
 

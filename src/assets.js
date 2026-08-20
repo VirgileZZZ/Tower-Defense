@@ -335,6 +335,8 @@ const ZOMBIE_SPECS = {
   walker: { scale: 1.0, torsoW: 0.52, skin: 0x7a8f6a, jacket: 0x4a5a44, pants: 0x3a4238 },
   fast:   { scale: 0.92, torsoW: 0.44, skin: 0x8fa37a, jacket: 0x7a4a3a, pants: 0x333a42, hunch: 0.16 },
   tank:   { scale: 1.32, torsoW: 0.66, skin: 0x5f6f57, jacket: 0x42484e, pants: 0x2e3430, armor: true },
+  // Squelette (troupe du Nécromant) : os blancs, yeux verts phosphorescents
+  skeleton: { scale: 0.95, torsoW: 0.48, skin: 0xe8e2d0, jacket: 0xd8d2c0, pants: 0xc2bca8, hunch: 0.14, bone: true },
 };
 
 const SKINS = {
@@ -402,7 +404,9 @@ export function createZombieModel(type = 'walker', skin = 'default') {
   const jaw = box(0.2, 0.07, 0.16, skinMat);
   jaw.position.set(0, -0.14, 0.05);
   head.add(jaw);
-  const eyeMat = mat(0xffb020, { emissive: 0xff9000, emissiveIntensity: 1.4 });
+  const eyeColor = spec.bone ? 0x86ff5a : 0xffb020;
+  const eyeEm = spec.bone ? 0x2aff2a : 0xff9000;
+  const eyeMat = mat(eyeColor, { emissive: eyeEm, emissiveIntensity: 1.8 });
   const eyeL = sphere(0.035, eyeMat);
   eyeL.position.set(-0.07, 0.03, 0.16);
   head.add(eyeL);
@@ -618,6 +622,94 @@ function towerFarm() {
   return model;
 }
 
+// ---- Barricade (posée sur le chemin) : palissades en bois + piques --------
+function towerBarricade() {
+  const model = new THREE.Group();
+  model.name = 'tower-barricade';
+  const wood = mat(0x8a6b45, { roughness: 0.85 });
+  const woodDark = mat(0x6d5236, { roughness: 0.9 });
+  const spikeMat = mat(0xaab4c4, { metalness: 0.8, roughness: 0.28 });
+  // socle (2 rangées de planches empilées)
+  for (let i = 0; i < 2; i++) {
+    const p = new THREE.Mesh(geoBox(1.9, 0.4, 1.0), i ? wood : woodDark);
+    p.position.y = 0.2 + i * 0.42;
+    model.add(p);
+  }
+  // poteaux verticaux latéraux
+  const postGeo = geoCyl(0.09, 0.11, 1.2, 8);
+  for (const sx of [-0.8, 0.8]) {
+    const post = new THREE.Mesh(postGeo, woodDark);
+    post.position.set(sx, 0.62, 0);
+    model.add(post);
+  }
+  // piques métalliques vers le haut (piégent la horde)
+  const spikes = [[-0.4, 0.2, 0.7], [0.4, -0.2, 0.8], [0, 0.1, 1.0], [-0.25, -0.2, 0.6], [0.25, 0.22, 0.65]];
+  for (const [sx, sz, h] of spikes) {
+    const spike = new THREE.Mesh(geoCyl(0.018, 0.075, h, 6), spikeMat);
+    spike.position.set(sx, 1.0 + h / 2, sz);
+    model.add(spike);
+  }
+  // petites barres de renfort croisées
+  for (const ang of [0.6, -0.6]) {
+    const bar = new THREE.Mesh(geoBox(0.12, 1.1, 0.08), wood);
+    bar.rotation.z = ang;
+    bar.position.y = 0.6;
+    model.add(bar);
+  }
+  model.userData.parts = {};
+  return model;
+}
+
+// ---- Nécromant : autel sombre + crâne émissif + bougies + cercle runique ---
+function towerNecro() {
+  const model = new THREE.Group();
+  model.name = 'tower-necro';
+  const stone = mat(0x2a2632, { metalness: 0.5, roughness: 0.5 });
+  const stoneDark = mat(0x1c1a22, { metalness: 0.4, roughness: 0.7 });
+  const soulMat = mat(0x8dff7a, { emissive: 0x3aff2a, emissiveIntensity: 1.6, metalness: 0.3 });
+  // base octogonale en pierre sombre
+  const plinth = cyl(0.95, 1.15, 0.4, stoneDark, 8);
+  plinth.position.y = 0.2; model.add(plinth);
+  const slab = cyl(0.7, 0.85, 0.28, stone, 8);
+  slab.position.y = 0.58; model.add(slab);
+  // cercle runique émissif au sol
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 8, 28), soulMat);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.74; model.add(ring);
+  // crâne flottant (sphère + orbite oculaires + mâchoire)
+  const skull = new THREE.Group();
+  const cranium = sphere(0.34, mat(0xdcd6c4, { roughness: 0.55 }));
+  cranium.scale.set(1, 0.92, 1.02); skull.add(cranium);
+  const eyeL = sphere(0.1, soulMat); eyeL.position.set(-0.14, 0.04, 0.26); skull.add(eyeL);
+  const eyeR = sphere(0.1, soulMat); eyeR.position.set(0.14, 0.04, 0.26); skull.add(eyeR);
+  const jaw = box(0.34, 0.16, 0.3, mat(0xcfc9b7, { roughness: 0.6 }));
+  jaw.position.set(0, -0.24, 0.12); skull.add(jaw);
+  // dents
+  for (let i = 0; i < 5; i++) {
+    const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.1, 5), mat(0xe8e2d0));
+    tooth.position.set(-0.14 + i * 0.07, -0.14, 0.26);
+    tooth.rotation.x = Math.PI;
+    skull.add(tooth);
+  }
+  skull.position.y = 1.35; model.add(skull);
+  // bougies sur le socle
+  const wax = mat(0x6a6250, { roughness: 0.8 });
+  const flameMat = mat(0x8dff7a, { emissive: 0x3aff2a, emissiveIntensity: 2.0 });
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.4;
+    const bx = Math.cos(a) * 0.98, bz = Math.sin(a) * 0.98;
+    const candle = cyl(0.05, 0.06, 0.26, wax, 8);
+    candle.position.set(bx, 0.5, bz); model.add(candle);
+    const flame = sphere(0.05, flameMat);
+    flame.position.set(bx, 0.68, bz); flame.scale.y = 1.8; model.add(flame);
+  }
+  // lumière verte
+  const glow = new THREE.PointLight(0x7aff5a, 1.3, 5, 2);
+  glow.position.y = 1.4; model.add(glow);
+  model.userData.parts = { skull, ring };
+  return model;
+}
+
 export function createTowerModel(type = 'gunner') {
   switch (type) {
     case 'sniper':   return towerSniper();
@@ -628,6 +720,8 @@ export function createTowerModel(type = 'gunner') {
     case 'shock':    return towerShock();
     case 'gatling':  return towerGatling();
     case 'farm':     return towerFarm();
+    case 'barricade':return towerBarricade();
+    case 'necro':    return towerNecro();
     default:         return towerGunner();
   }
 }
